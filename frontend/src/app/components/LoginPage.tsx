@@ -25,12 +25,20 @@ export function LoginPage() {
   const [resendCountdown, setResendCountdown] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  /** Hackathon / dev: Ethereal “demo inbox” URL to open the OTP in browser (free, no API keys). */
+  const [otpPreviewUrl, setOtpPreviewUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (userType === "admin") {
       setIsSignUp(false);
     }
   }, [userType]);
+
+  useEffect(() => {
+    if (!showOtp) {
+      setOtpPreviewUrl(null);
+    }
+  }, [showOtp]);
 
   useEffect(() => {
     if (resendCountdown > 0) {
@@ -77,11 +85,14 @@ export function LoginPage() {
           return;
         }
 
-        await authService.login({
+        const loginRes = await authService.login({
           phone: mobile,
           password,
         });
 
+        if (loginRes.otpPreviewUrl) {
+          setOtpPreviewUrl(loginRes.otpPreviewUrl);
+        }
         setShowOtp(true);
         setOtpFor("login");
       }
@@ -104,13 +115,16 @@ export function LoginPage() {
         return;
       }
 
-      await authService.signup({
+      const signupRes = await authService.signup({
         fullName,
         email,
         phone: mobile,
         password,
       });
 
+      if (signupRes.otpPreviewUrl) {
+        setOtpPreviewUrl(signupRes.otpPreviewUrl);
+      }
       // Email-only signup OTP flow
       setShowOtp(true);
       setOtpFor("signup-email");
@@ -172,15 +186,21 @@ export function LoginPage() {
 
       try {
         if (signupStep === "email-otp") {
-          await authService.resendEmailOtp({
+          const r = await authService.resendEmailOtp({
             phone: mobile,
             email,
           });
+          if (r.otpPreviewUrl) {
+            setOtpPreviewUrl(r.otpPreviewUrl);
+          }
         } else {
-          await authService.login({
+          const r = await authService.login({
             phone: mobile,
             password,
           });
+          if (r.otpPreviewUrl) {
+            setOtpPreviewUrl(r.otpPreviewUrl);
+          }
         }
 
         setOtp("");
@@ -371,6 +391,21 @@ export function LoginPage() {
               <p className="text-[9px] md:text-[10px] text-gray-400 mt-6 font-black uppercase tracking-widest text-center">
                 {signupStep === "email-otp" ? "OTP sent to your email address." : "An OTP has been dispatched to your identity."}
               </p>
+              {otpPreviewUrl && (
+                <div className="mt-4 p-3 border-[1.5px] border-blue-600/40 bg-blue-50/80 text-center space-y-2">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-blue-900">
+                    Demo mode — open test inbox to read your code (free, no mailbox setup)
+                  </p>
+                  <a
+                    href={otpPreviewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-[10px] font-black uppercase tracking-wider text-blue-600 underline underline-offset-4 hover:opacity-80"
+                  >
+                    Open demo inbox →
+                  </a>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col items-center gap-4">

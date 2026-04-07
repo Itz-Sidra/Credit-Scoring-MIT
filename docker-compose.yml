@@ -10,24 +10,20 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Secrets live in backend/.env; Compose only reads ./.env for ${...} in this file.
+    env_file:
+      - ./backend/.env
     environment:
       NODE_ENV: production
       PORT: 8000
-      MONGO_URI: ${MONGO_URI}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       REDIS_URL: redis://redis:6379
-      EMAIL_USER: ${EMAIL_USER}
-      EMAIL_PASSWORD: ${EMAIL_PASSWORD}
-      MSG91_API_KEY: ${MSG91_API_KEY}
-      MSG91_TEMPLATE_ID: ${MSG91_TEMPLATE_ID}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       ML_PYTHON_BIN: python3
       ML_INFERENCE_TIMEOUT_MS: ${ML_INFERENCE_TIMEOUT_MS:-10000}
       ML_MANIFEST_PATH: ${ML_MANIFEST_PATH:-models/integration_contracts/winner_upgrade_v5/winner_v5_serving_manifest.json}
       ML_ARTIFACT_PATH: ${ML_ARTIFACT_PATH:-models/integration_contracts/winner_upgrade_v5/winner_v5_serving_artifact.pkl}
     depends_on:
       - redis
+      - mongodb
     expose:
       - "8000"
 
@@ -42,3 +38,10 @@ services:
       - backend
     ports:
       - "80:80"
+
+  mongodb:
+    image: mongo:6
+    container_name: barclays-mongo
+    ports:
+      - "27017:27017"
+    restart: always

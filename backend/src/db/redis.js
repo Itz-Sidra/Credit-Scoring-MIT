@@ -1,10 +1,12 @@
 import Redis from "ioredis";
 
-const redisClient = new Redis({
-  url: process.env.REDIS_URL,
-  retryStrategy: (times) => {
+// ioredis ignores `{ url: ... }`; pass the URL (or host:port) as the first argument.
+const redisConnection =
+  process.env.REDIS_URL?.trim() || "redis://127.0.0.1:6379";
+
+const redisClient = new Redis(redisConnection, {
+  retryStrategy: () => {
     // Don't retry forever on initial connection failure
-    // Just log errors but don't crash the server
     return null;
   },
   enableReadyCheck: false,

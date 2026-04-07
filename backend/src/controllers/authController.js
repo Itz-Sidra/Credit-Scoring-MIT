@@ -151,6 +151,9 @@ export const signup = async (req, res) => {
       message: "OTP sent to email",
       step: "verify_email_otp",
       email: email.split("@")[0] + "@***.*",
+      ...(emailOtpResult?.otpPreviewUrl
+        ? { otpPreviewUrl: emailOtpResult.otpPreviewUrl }
+        : {}),
       ...(shouldExposeDebugEmailOtp() && emailOtpResult?.otp
         ? { debugEmailOtp: emailOtpResult.otp }
         : {}),
@@ -395,7 +398,9 @@ export const login = async (req, res) => {
         await user.save();
       } else {
         const key = user.phone || phone;
-        if (key) inMemoryUsers.set(key, user);
+        if (key) {
+          inMemoryUsers.set(key, user);
+        }
       }
     } catch (dbError) {
       if (process.env.NODE_ENV !== "development") {
@@ -425,6 +430,9 @@ export const login = async (req, res) => {
 
     return res.status(200).json({
       message: "OTP sent to email, please verify",
+      ...(emailOtpResult?.otpPreviewUrl
+        ? { otpPreviewUrl: emailOtpResult.otpPreviewUrl }
+        : {}),
       ...(shouldExposeDebugEmailOtp() && emailOtpResult?.otp
         ? { debugEmailOtp: emailOtpResult.otp }
         : {}),
@@ -594,6 +602,9 @@ export const resendEmailOtp = async (req, res) => {
       message: "Email OTP resent successfully",
       step: "verify_email_otp",
       email: tempSignupData.email.split("@")[0] + "@***.*",
+      ...(emailOtpResult?.otpPreviewUrl
+        ? { otpPreviewUrl: emailOtpResult.otpPreviewUrl }
+        : {}),
       ...(shouldExposeDebugEmailOtp() && emailOtpResult?.otp
         ? { debugEmailOtp: emailOtpResult.otp }
         : {}),

@@ -8,20 +8,77 @@ const isEmailOtpFallbackEnabled = () =>
   process.env.NODE_ENV === "development" ||
   process.env.ALLOW_EMAIL_OTP_FALLBACK === "true";
 
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD,
-  },
-});
+/** Cached Ethereal test account (free SMTP + web preview — no API keys). */
+let etherealAccountPromise = null;
+
+function getEtherealAccount() {
+  if (!etherealAccountPromise) {
+    etherealAccountPromise = nodemailer.createTestAccount();
+  }
+  return etherealAccountPromise;
+}
+
+/**
+ * ethereal — Nodemailer Ethereal (free, preview URL for demos).
+ * gmail — real Gmail / App Password.
+ * auto — Ethereal if EMAIL_* look unset or placeholder; else Gmail.
+ */
+function resolveOtpMailMode() {
+  const explicit = (process.env.OTP_MAIL_MODE || "").trim().toLowerCase();
+  if (explicit === "ethereal" || explicit === "gmail") return explicit;
+  if (explicit === "auto" || explicit === "") {
+    const user = (process.env.EMAIL_USER || "").trim();
+    const pass = (process.env.EMAIL_PASSWORD || "").trim();
+    const placeholder =
+      !user ||
+      !pass ||
+      user.startsWith("your_") ||
+      pass.startsWith("your_") ||
+      user.includes("example.com");
+    return placeholder ? "ethereal" : "gmail";
+  }
+  return "gmail";
+}
+
+async function createOtpTransport(mode) {
+  if (mode === "ethereal") {
+    const account = await getEtherealAccount();
+    return {
+      mode,
+      transport: nodemailer.createTransport({
+        host: "smtp.ethereal.email",
+        port: 587,
+        secure: false,
+        auth: { user: account.user, pass: account.pass },
+      }),
+      fromAddress: `"Barclays Credit" <${account.user}>`,
+    };
+  }
+
+  if (!process.env.EMAIL_USER?.trim() || !process.env.EMAIL_PASSWORD?.trim()) {
+    throw new Error(
+      "EMAIL_USER and EMAIL_PASSWORD are required when OTP_MAIL_MODE is gmail (or set OTP_MAIL_MODE=auto with placeholders to use free Ethereal)."
+    );
+  }
+
+  return {
+    mode,
+    transport: nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASSWORD,
+      },
+    }),
+    fromAddress: process.env.EMAIL_USER,
+  };
+}
 
 export const sendEmailOTP = async (email) => {
   console.log(` sendEmailOTP called with email: ${email}`);
 
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-    throw new Error("Email credentials not configured in .env");
-  }
+  const mode = resolveOtpMailMode();
+  const { transport, fromAddress } = await createOtpTransport(mode);
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   console.log(`🔐 Generated Email OTP: ${otp}`);
@@ -44,7 +101,7 @@ export const sendEmailOTP = async (email) => {
   // Send email (always send, even in development)
   try {
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: fromAddress,
       to: email,
       subject: "🔐 Barclays Credit - Email Verification OTP",
       html: `
@@ -88,10 +145,24 @@ export const sendEmailOTP = async (email) => {
       `,
     };
 
-    // Always send email (development and production)
-    console.log(` Sending email OTP to: ${email}`);
-    await transporter.sendMail(mailOptions);
+    console.log(` Sending email OTP to: ${email} (via ${mode})`);
+    const info = await transport.sendMail(mailOptions);
     console.log(` Email sent successfully to ${email}`);
+
+    let otpPreviewUrl;
+    if (mode === "ethereal") {
+      otpPreviewUrl = nodemailer.getTestMessageUrl(info) || undefined;
+      if (otpPreviewUrl) {
+        console.log(`📬 Open demo inbox to view OTP: ${otpPreviewUrl}`);
+      }
+    }
+
+    return {
+      message: "OTP sent to email",
+      emailDelivery: mode,
+      ...(otpPreviewUrl ? { otpPreviewUrl } : {}),
+      ...(isEmailOtpFallbackEnabled() ? { otp } : {}),
+    };
   } catch (error) {
     console.error("❌ Error sending email:", error.message);
     if (isEmailOtpFallbackEnabled()) {
@@ -106,11 +177,6 @@ export const sendEmailOTP = async (email) => {
     }
     throw new Error(`Failed to send email: ${error.message}`);
   }
-
-  return {
-    message: "OTP sent to email",
-    ...(isEmailOtpFallbackEnabled() ? { otp } : {}),
-  };
 };
 
 export const verifyEmailOTP = async (email, otp) => {

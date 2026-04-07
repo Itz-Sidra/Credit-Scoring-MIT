@@ -29,12 +29,20 @@ interface GenericAuthResponse {
   message?: string;
   accessToken?: string;
   refreshToken?: string;
+  /** Free Ethereal demo inbox — open in browser to read OTP (hackathon / dev). */
+  otpPreviewUrl?: string;
+  debugEmailOtp?: string;
   user?: {
     fullName: string;
     email: string;
     phone: string;
     role?: string;
   };
+}
+
+export interface SignupOtpResponse extends GenericAuthResponse {
+  step?: string;
+  email?: string;
 }
 
 interface AuthResponse {
@@ -49,7 +57,7 @@ interface AuthResponse {
 
 export const authService = {
   // Signup endpoint - sends OTP to phone
-  signup: async (data: SignupPayload): Promise<{ message: string }> => {
+  signup: async (data: SignupPayload): Promise<SignupOtpResponse> => {
     const response = await fetch(`${API_BASE_URL}/auth/signup`, {
       method: 'POST',
       headers: {
