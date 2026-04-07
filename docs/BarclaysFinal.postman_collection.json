@@ -1,0 +1,269 @@
+{
+  "info": {
+    "name": "BarclaysFinal API",
+    "_postman_id": "87fd848a-e3fd-40e5-b703-0011d4d95cbe",
+    "description": "Collection for user/admin flows, scoring, and operations health checks.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000/api"
+    },
+    {
+      "key": "userToken",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "loanId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Service Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Service Readiness",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health/ready",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "User Loan Flow",
+      "item": [
+        {
+          "name": "Apply Loan",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"loanType\": \"personal\",\n  \"requestedAmount\": 150000,\n  \"requestedTenure\": 24,\n  \"purpose\": \"Business expansion\",\n  \"age\": 30\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/loan/apply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loan",
+                "apply"
+              ]
+            }
+          }
+        },
+        {
+          "name": "My Loans",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loan/my-loans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loan",
+                "my-loans"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Flow",
+      "item": [
+        {
+          "name": "Admin My Loans",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/my-loans?status=under_review,approved,rejected&risk=low,medium,high",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "my-loans"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "under_review,approved,rejected"
+                },
+                {
+                  "key": "risk",
+                  "value": "low,medium,high"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin Loan Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/my-loans/{{loanId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "my-loans",
+                "{{loanId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin Explainability",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/loans/{{loanId}}/explainability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "loans",
+                "{{loanId}}",
+                "explainability"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Approve Loan",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approvedAmount\": 120000,\n  \"interestRate\": 12.9,\n  \"tenure\": 24,\n  \"notes\": \"Approved in demo flow\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/loans/{{loanId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "loans",
+                "{{loanId}}",
+                "approve"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reject Loan",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejectionReason\": \"Insufficient eligibility in demo flow\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/loans/{{loanId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "loans",
+                "{{loanId}}",
+                "reject"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

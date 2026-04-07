@@ -1,0 +1,405 @@
+/* ============================================================
+   Apply Loan Page — Brutalist Theme Overrides
+   ============================================================
+   Matches the landing page design system: white bg, black text, 
+   sharp borders, bold typography, minimal rounded corners.
+   ============================================================ */
+
+.apply-loan-brutal {
+  /* Card backgrounds — force white */
+  & .bg-white {
+    background-color: #ffffff !important;
+  }
+
+  & .bg-slate-50,
+  & .bg-blue-50 {
+    background-color: #ffffff !important;
+  }
+
+  & .bg-green-50 {
+    background-color: #ffffff !important;
+  }
+
+  & .bg-amber-50 {
+    background-color: #fff8e1 !important;
+  }
+
+  & .bg-red-50 {
+    background-color: #fff5f5 !important;
+  }
+
+  /* Borders — sharp black like landing page */
+  & .border-slate-200,
+  & .border-slate-300 {
+    border-color: #000000 !important;
+    border-width: 1.5px !important;
+  }
+
+  & .border-blue-200 {
+    border-color: #2563eb !important;
+    border-width: 1.5px !important;
+  }
+
+  & .border-blue-300 {
+    border-color: #2563eb !important;
+  }
+
+  & .border-green-300 {
+    border-color: #16a34a !important;
+    border-width: 1.5px !important;
+  }
+
+  & .border-red-300 {
+    border-color: #dc2626 !important;
+    border-width: 1.5px !important;
+  }
+
+  /* Text — strong black contrast */
+  & .text-slate-900,
+  & .text-slate-800,
+  & .text-slate-700,
+  & .text-slate-600,
+  & .text-slate-500 {
+    color: #000000 !important;
+  }
+
+  /* Force labels to uppercase brutalist */
+  & label,
+  & .text-slate-600.text-xs,
+  & .text-sm.font-medium.text-slate-700 {
+    color: rgba(0,0,0,0.5) !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.15em !important;
+    font-size: 10px !important;
+  }
+
+  /* Subheadings inside forms */
+  & h3.text-sm.font-medium.text-slate-700,
+  & h3.text-lg.font-bold {
+    color: #000000 !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: -0.02em !important;
+    font-size: 16px !important;
+    margin-bottom: 8px !important;
+  }
+
+  /* Blue accents */
+  & .text-blue-600 {
+    color: #2563eb !important;
+  }
+
+  & .text-blue-700 {
+    color: #1d4ed8 !important;
+  }
+
+  /* Success / Warning / Error colors */
+  & .text-green-600 {
+    color: #16a34a !important;
+  }
+
+  & .text-amber-700 {
+    color: #b45309 !important;
+  }
+
+  & .text-red-600 {
+    color: #dc2626 !important;
+  }
+
+  /* Inputs — sharp borders, no rounded corners */
+  & input,
+  & select,
+  & textarea,
+  & [data-radix-select-trigger] {
+    background-color: #ffffff !important;
+    border: 1.5px solid #000000 !important;
+    border-radius: 0 !important;
+    color: #000000 !important;
+    font-weight: 700 !important;
+    box-shadow: 2px 2px 0 0 rgba(0,0,0,1) !important;
+    transition: all 0.2s !important;
+  }
+
+  & input::placeholder,
+  & textarea::placeholder {
+    color: rgba(0, 0, 0, 0.3) !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+  }
+
+  & input:focus,
+  & select:focus,
+  & textarea:focus {
+    border-color: #2563eb !important;
+    box-shadow: none !important;
+    outline: 2px solid #2563eb !important;
+    outline-offset: -2px !important;
+  }
+
+  & input[readonly] {
+    background-color: #f5f5f5 !important;
+    border-color: rgba(0, 0, 0, 0.2) !important;
+    color: rgba(0, 0, 0, 0.6) !important;
+  }
+
+  /* Select trigger buttons — sharp */
+  & button[role="combobox"],
+  & [data-radix-select-trigger] {
+    background-color: #ffffff !important;
+    border: 1.5px solid #000000 !important;
+    border-radius: 0 !important;
+    color: #000000 !important;
+    font-weight: 700 !important;
+    box-shadow: 2px 2px 0 0 rgba(0,0,0,1) !important;
+  }
+
+  /* Radio items */
+  & [data-radix-radio-group-item] {
+    border-color: #000000 !important;
+    border-width: 1.5px !important;
+  }
+
+  /* ALL cards — sharp edges */
+  & [class*="rounded"] {
+    border-radius: 0 !important;
+  }
+
+  /* Card shadows — flat strong shadows like landing page */
+  & .shadow-sm,
+  & .shadow-md,
+  & .shadow-lg,
+  & .shadow {
+    box-shadow: none !important;
+  }
+
+  /* Remove borders from main form cards to match user request */
+  & div.bg-white.border-slate-300:not(.border-dashed),
+  & div.bg-slate-50.border-slate-300,
+  & div.bg-green-50.border-green-300,
+  & div.bg-amber-50.border-amber-200,
+  & div.bg-blue-50.border-blue-200 {
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  /* Text styles for alerts/info bits inside those unboxed sections */
+  & .bg-amber-50 .text-amber-700,
+  & .bg-blue-50 .text-blue-700,
+  & .bg-green-50 .text-green-600,
+  & .bg-green-50 .font-semibold {
+    color: #000000 !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+  }
+
+  /* Gradient cards — remove gradients, keep white */
+  & .bg-gradient-to-b,
+  & .bg-gradient-to-br {
+    background: #ffffff !important;
+  }
+
+  /* Progress bar */
+  & .bg-blue-600 {
+    background-color: #2563eb !important;
+  }
+
+  /* Slider root and track */
+  & span[dir="ltr"][data-orientation] {
+    border-radius: 0 !important;
+  }
+  
+  & span[dir="ltr"][data-orientation] > span:first-child {
+    background-color: #000000 !important;
+    border-radius: 0 !important;
+  }
+  
+  /* Slider thumb */
+  & [role="slider"] {
+    background-color: #ffffff !important;
+    border: 2px solid #000000 !important;
+    border-radius: 0 !important;
+    box-shadow: 2px 2px 0 0 rgba(0,0,0,1) !important;
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  /* Checkbox overrides */
+  & input[type="checkbox"] {
+    border-color: #000000 !important;
+    border-width: 1.5px !important;
+    border-radius: 0 !important;
+  }
+
+  /* Dashed upload areas */
+  & .border-dashed {
+    border-color: rgba(0, 0, 0, 0.3) !important;
+    border-width: 2px !important;
+  }
+
+  & .border-dashed:hover {
+    border-color: #2563eb !important;
+  }
+
+  /* Occupation / business type selection chips */
+  & .bg-blue-50.border-blue-600 {
+    background-color: #000000 !important;
+    color: #ffffff !important;
+    border-color: #000000 !important;
+  }
+  
+  & div.border.rounded-lg.p-3.text-center {
+    border-radius: 0 !important;
+    border: 1.5px solid #000000 !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.1em !important;
+    transition: all 0.2s !important;
+  }
+  
+  & div.border.rounded-lg.p-3.text-center:hover {
+    background-color: #f5f5f5 !important;
+    box-shadow: 2px 2px 0 0 rgba(0,0,0,1) !important;
+    transform: translateY(-2px) !important;
+  }
+  
+  & div.border.rounded-lg.p-3.text-center.bg-blue-50 {
+    background-color: #000000 !important;
+    color: #ffffff !important;
+    box-shadow: 4px 4px 0 0 rgba(0,0,0,1) !important;
+    transform: translateY(-2px) !important;
+  }
+
+  /* File upload icon backgrounds */
+  & .bg-blue-100 {
+    background-color: rgba(37, 99, 235, 0.08) !important;
+  }
+
+  & .bg-blue-200 {
+    background-color: rgba(37, 99, 235, 0.12) !important;
+  }
+
+  /* Section dividers - remove top borders to stop the boxed look */
+  & .border-t.border-slate-200,
+  & .divide-slate-200 > * + * {
+    border-color: transparent !important;
+  }
+
+  /* Typography — match landing page weights */
+  & h2 {
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    text-transform: uppercase;
+  }
+
+  & h3 {
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 1.125rem !important; /* text-lg equivalent */
+    color: #000000 !important;
+  }
+
+  /* Button styling — no rounding, black */
+  & button[type="submit"],
+  & .bg-blue-600 {
+    border-radius: 0 !important;
+    border: 1.5px solid transparent !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.15em !important;
+  }
+  
+  & button[type="button"].bg-slate-100 {
+    background-color: #ffffff !important;
+    border: 1.5px solid #000000 !important;
+    color: #000000 !important;
+    border-radius: 0 !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.15em !important;
+  }
+  
+  & button[type="button"].bg-slate-100:hover {
+    background-color: #000000 !important;
+    color: #ffffff !important;
+  }
+}
+
+/* Select dropdown portal content */
+[data-radix-popper-content-wrapper] [role="listbox"],
+[data-radix-popper-content-wrapper] [role="group"] {
+  background-color: #ffffff !important;
+  border: 1.5px solid #000000 !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  box-shadow: 4px 4px 0 0 rgba(0,0,0,1) !important;
+}
+
+[data-radix-popper-content-wrapper] [role="option"] {
+  color: #000000 !important;
+  border-radius: 0 !important;
+  font-weight: 700 !important;
+  background-color: transparent !important;
+  font-size: 0.75rem !important; /* match text-xs */
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  padding: 10px 12px !important;
+  border-bottom: 1px solid rgba(0,0,0,0.1) !important;
+  cursor: pointer !important;
+}
+
+[data-radix-popper-content-wrapper] [role="option"]:last-child {
+  border-bottom: none !important;
+}
+
+[data-radix-popper-content-wrapper] [role="option"]:hover,
+[data-radix-popper-content-wrapper] [role="option"][data-highlighted] {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+/* Fix text spans inside selects to ensure they match regular inputs */
+.apply-loan-brutal [data-radix-select-value],
+.apply-loan-brutal span[style*="pointer-events: none"] {
+  color: #000000 !important;
+  background-color: transparent !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  font-size: 0.75rem !important; /* text-xs */
+}
+
+/* Placeholder styling inside the select */
+.apply-loan-brutal [data-placeholder] {
+  color: rgba(0,0,0,0.4) !important;
+}
+
+/* Checkbox and Radio styling fixes */
+.apply-loan-brutal span {
+  background-color: transparent !important;
+}
+
+/* ============================================================
+   Page animations 
+   ============================================================ */
+@keyframes brutal-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.apply-loan-brutal > main {
+  animation: brutal-fade-in 0.5s ease-out both;
+}

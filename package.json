@@ -1,0 +1,20 @@
+{
+  "name": "barclaysfinal-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "sh ./scripts/dev-all.sh",
+    "dev:backend": "npm --prefix ./backend run dev:local",
+    "dev:frontend": "npm --prefix ./frontend run dev",
+    "docker:up": "docker compose --env-file .env.docker up -d --build",
+    "docker:down": "docker compose --env-file .env.docker down",
+    "docker:logs": "docker compose --env-file .env.docker logs -f",
+    "docker:ps": "docker compose --env-file .env.docker ps",
+    "build:frontend": "npm --prefix ./frontend run build",
+    "demo:priority1": "npm --prefix ./backend run demo:priority1",
+    "smoke:ml": "npm --prefix ./backend run smoke:ml",
+    "smoke:phase4": "npm --prefix ./backend run smoke:phase4",
+    "smoke:phase5": "npm --prefix ./backend run smoke:phase5",
+    "predeploy:check": "npm run build:frontend && npm run smoke:ml"
+  }
+}

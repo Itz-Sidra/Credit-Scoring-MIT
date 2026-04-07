@@ -1,0 +1,44 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 8000
+      MONGO_URI: ${MONGO_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      REDIS_URL: redis://redis:6379
+      EMAIL_USER: ${EMAIL_USER}
+      EMAIL_PASSWORD: ${EMAIL_PASSWORD}
+      MSG91_API_KEY: ${MSG91_API_KEY}
+      MSG91_TEMPLATE_ID: ${MSG91_TEMPLATE_ID}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      ML_PYTHON_BIN: python3
+      ML_INFERENCE_TIMEOUT_MS: ${ML_INFERENCE_TIMEOUT_MS:-10000}
+      ML_MANIFEST_PATH: ${ML_MANIFEST_PATH:-models/integration_contracts/winner_upgrade_v5/winner_v5_serving_manifest.json}
+      ML_ARTIFACT_PATH: ${ML_ARTIFACT_PATH:-models/integration_contracts/winner_upgrade_v5/winner_v5_serving_artifact.pkl}
+    depends_on:
+      - redis
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
