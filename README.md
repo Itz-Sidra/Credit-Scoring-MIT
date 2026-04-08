@@ -56,6 +56,7 @@ If ML fails → fallback to Manual Review  |  Suspicious data → Force review
 - Admins can inspect applications with full AI context, approve/reject with notes, and maintain audit trails. Final authority always rests with a human.
 
 ### 7. Copilot / Analysis Chat
+- LLM-powered assistant (Ollama/Qwen) lets admins ask natural language questions like "Why is this applicant high risk?" or "Compare loan A vs loan B."
 
 ## One-Command Start (Recommended)
 
