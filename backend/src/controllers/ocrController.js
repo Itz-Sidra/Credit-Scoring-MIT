@@ -22,8 +22,24 @@ const storage = multer.diskStorage({
   },
 });
 
-// Textract AnalyzeID supports JPEG and PNG for DocumentPages bytes.
-const allowedMime = ["image/jpeg", "image/png"];
+// Accept common browser/mobile types; Textract may still fail on some (e.g. WebP) — we soft-accept anyway.
+const allowedMime = ["image/jpeg", "image/png", "image/webp"];
+
+function softAcceptBody(overrides = {}) {
+  return {
+    message:
+      "Document received (automated verification unavailable or unclear image)",
+    documentType: null,
+    name: null,
+    dob: null,
+    idNumber: null,
+    gender: null,
+    address: null,
+    identityVerified: false,
+    softAccept: true,
+    ...overrides,
+  };
+}
 
 const upload = multer({
   storage,
@@ -59,14 +75,10 @@ export const uploadAndAnalyzeDocument = (req, res) => {
       } catch (_) {}
 
       if (!result.success) {
-        const errorHint = result.error
-          ? ` (${result.error})`
-          : "";
-        return res.status(422).json({
-          message: "Could not extract data from document. Please upload a clear JPG/PNG image with visible ID fields.",
-          error: result.error || "Textract returned no results",
-          hint: `If this keeps failing, verify AWS Textract credentials and region.${errorHint}`,
-        });
+        if (result.error) {
+          console.warn("OCR soft-accept (no extract):", result.error);
+        }
+        return res.status(200).json(softAcceptBody());
       }
 
       return res.status(200).json({
@@ -81,8 +93,8 @@ export const uploadAndAnalyzeDocument = (req, res) => {
       });
     } catch (analysisErr) {
       try { fs.unlinkSync(filePath); } catch (_) {}
-      console.error("❌ OCR controller error:", analysisErr.message);
-      return res.status(500).json({ message: "OCR analysis failed", error: analysisErr.message });
+      console.error("❌ OCR controller error (soft-accept):", analysisErr.message);
+      return res.status(200).json(softAcceptBody());
     }
   });
 };

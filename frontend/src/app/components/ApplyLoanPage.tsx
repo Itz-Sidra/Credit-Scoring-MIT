@@ -603,14 +603,27 @@ export function ApplyLoanPage() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: form,
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setOcrResult({ name: data.name, dob: data.dob, idNumber: data.idNumber, identityVerified: data.identityVerified });
+        if (data.softAccept) {
+          setOcrResult(null);
+        } else {
+          setOcrResult({
+            name: data.name,
+            dob: data.dob,
+            idNumber: data.idNumber,
+            identityVerified: data.identityVerified,
+          });
+        }
+        setOcrError(null);
       } else {
-        setOcrError(data.message || 'OCR failed');
+        setOcrError(null);
+        setOcrResult(null);
       }
     } catch (e: any) {
-      setOcrError('Could not analyse document');
+      console.warn("Identity document upload optional OCR:", e);
+      setOcrError(null);
+      setOcrResult(null);
     } finally {
       setOcrLoading(false);
     }

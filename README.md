@@ -1,93 +1,114 @@
-# CREDIT — AI-Assisted Alternative Credit Underwriting
+# BarclaysFinal Workspace
 
-**Repository:** [https://github.com/Umar-Jahangir/Credit-Scoring](https://github.com/Umar-Jahangir/Credit-Scoring)
+This workspace is organized for clean full-stack development with separate frontend and backend projects.
 
-CREDIT is a full-stack hackathon-style platform for **digital loan applications** when applicants have **thin or no traditional credit history**. Borrowers complete OTP-verified signup, segment-aware profiles, loan requests, and optional **document OCR**; the backend runs **rule-based pre-screening**, **ML risk scoring** (Python bridge), and **policy guardrails**, then surfaces results to **admin review** with explainability and an optional **LLM copilot**.
+## Structure
 
----
+- backend: Node.js/Express APIs, ML integration bridge, admin/user loan workflows
+- frontend: React/Vite UI for borrower and admin portals
+- docs: deployment checklist and API collection for demo/testing
+- scripts: root orchestration scripts
 
-## What It Does
+## One-Command Start (Recommended)
 
-- **Borrowers:** email/OTP authentication, profile by segment (e.g. salaried, MSME, farmer, student), loan application, document upload, status and credit views.
-- **Admins:** portfolio-style monitoring, loan queue, decision support (risk, eligible amount, flags), approve/reject with notes, optional chat assistant.
-- **Underwriting engine:** deterministic checks first, then ML inference, then business rules that cap and adjust recommendations before human sign-off.
+From workspace root:
 
----
-
-## How It Works (Pipeline)
-
-```
-Input data → Pre-screen (rules) → Feature + ML scoring → Policy guardrails → Stored decision / explainability → Admin approval → Final status
+```bash
+npm run dev
 ```
 
-1. **Ingestion** — Profile, loan request, collateral hints, and optional **AWS Textract** identity document analysis.
-2. **Pre-screen** — Fast flags (e.g. age, amount/tenure bounds, identity verification, loan-to-income bands). Hard failures can auto-reject; other flags route to manual review.
-3. **ML** — Node invokes Python to score risk (primary **Winner v5** serving path; alternate paths can expose **SHAP**-style explanations where configured).
-4. **Policy** — Combines model risk band with multipliers and **income-based caps** (annual-income multiples depend on risk tier), plus auto-approve / auto-reject thresholds for some cases.
-5. **Persistence** — Decisions and analysis land in **MongoDB**; OTP-related state uses **Redis**.
-6. **Human-in-the-loop** — Admins confirm or override with audit-friendly actions.
-7. **Copilot (optional)** — **Ollama**-hosted models can answer analyst questions grounded on application context.
+This starts:
 
-For **installation, environment variables, and commands**, see **[RUN.md](./RUN.md)**.
+- backend on http://localhost:8000
+- frontend on http://localhost:5173
 
----
+## Daily Commands To Memorize
 
-## Repository Layout
+Run these from workspace root every time:
 
-| Path | Purpose |
-|------|---------|
-| `frontend/` | React + TypeScript + Vite UI (borrower + admin) |
-| `backend/` | Express API, auth, loan flow, ML bridge, OCR, chat integration |
-| `docs/` | Postman collection, deployment checklist, EC2 notes |
-| `scripts/` | Root dev orchestration (`dev-all.sh`) |
-| `docker-compose.yml` | Redis, MongoDB, backend, frontend (nginx) |
+```bash
+npm --prefix ./backend install
+npm --prefix ./frontend install
+python3 -m pip install -r requirements.txt
+npm run dev
+```
 
----
+Quick health check:
 
-## Tech Stack
+```bash
+curl -sS http://localhost:8000/api/health
+```
 
-| Layer | Technologies |
-|--------|----------------|
-| UI | React, TypeScript, Vite, MUI, Radix |
-| API | Node.js, Express (ESM), JWT, role middleware |
-| Data | MongoDB (Mongoose), Redis (ioredis) |
-| ML | Python, scikit-learn, XGBoost, SHAP (alternate path) |
-| OCR | AWS Textract (`AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) |
-| Analyst AI | Ollama (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`) |
-| Containers | Docker Compose |
+## Individual Commands
 
----
+Backend:
 
-## Research / Datasets (Modeling Context)
+```bash
+npm --prefix ./backend install
+python3 -m pip install -r requirements.txt
+npm --prefix ./backend run start
+```
 
-Public datasets referenced for experimentation and benchmarking include **Kaggle Home Credit**, **Lending Club**, **German Credit (UCI)**, **Give Me Some Credit**, plus **synthetic** augmentation for thin-file scenarios. Production serving uses the integrated model artifacts under `backend/models/…` as configured via env.
+Frontend:
 
----
+```bash
+npm --prefix ./frontend install
+npm --prefix ./frontend run dev
+```
 
-## API & Operations
+Frontend build check:
 
-| Resource | Location |
-|----------|----------|
-| Postman | `docs/BarclaysFinal.postman_collection.json` |
-| API notes | `backend/docs/API_CONTRACTS.md` |
-| Deployment | `docs/DEPLOYMENT_CHECKLIST.md`, `docs/EC2_DEPLOY_GUIDE.md` |
-| Health | `GET /api/health`, `GET /api/health/ready` (backend default `http://localhost:8000`) |
+```bash
+npm --prefix ./frontend run build
+```
 
----
+## Smoke Tests
 
-## Scripts (from repo root)
+```bash
+npm run smoke:phase4
+npm run smoke:phase5
+```
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Starts backend + frontend via `scripts/dev-all.sh` (needs `sh`; see RUN.md on Windows) |
-| `npm run dev:backend` / `npm run dev:frontend` | Start one side only |
-| `npm run docker:up` / `docker:down` | Docker Compose stack |
-| `npm run demo:priority1` | Sample benchmark personas (terminal) |
-| `npm run smoke:phase4` / `smoke:phase5` | Backend smoke scripts |
-| `npm run smoke:ml` | ML service smoke test |
+## Priority 1 Demo Commands
 
----
+```bash
+npm run demo:priority1
+```
 
-## Contributing / Team
+This prints 3 benchmark borrower personas with:
 
-Issues and PRs welcome on **[GitHub](https://github.com/Umar-Jahangir/Credit-Scoring)**. For local setup and troubleshooting, use **[RUN.md](./RUN.md)**.
+- credit score
+- repayment probability
+- probability of default
+- risk band
+
+For UI explainability during demo, open the admin loans screen and select a loan:
+
+- [frontend/src/app/components/AdminLoanApplications.tsx](frontend/src/app/components/AdminLoanApplications.tsx)
+
+## Health Endpoints
+
+- GET http://localhost:8000/api/health
+- GET http://localhost:8000/api/health/ready
+
+## Contracts And Collections
+
+- API contracts: backend/docs/API_CONTRACTS.md
+- Postman collection: docs/BarclaysFinal.postman_collection.json
+- Deployment runbook: docs/DEPLOYMENT_CHECKLIST.md
+
+## Environment
+
+- Backend env: backend/.env and backend/.env.example
+- Frontend env: frontend/.env.example
+
+## Python Requirements
+
+- Root Python requirements: [requirements.txt](/Users/shlokpalrecha/Desktop/BarclaysFinal/requirements.txt)
+- Backend ML-specific Python requirements: [backend/requirements.txt](/Users/shlokpalrecha/Desktop/BarclaysFinal/backend/requirements.txt)
+
+Install them from the workspace root:
+
+```bash
+python3 -m pip install -r requirements.txt
+```

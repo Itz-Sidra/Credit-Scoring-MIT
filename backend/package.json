@@ -20,6 +20,7 @@
     "debug:card": "node --env-file=.env scripts/debug_applicant_card.js",
     "test:fetch": "node --env-file=.env scripts/testApplicantFetch.js",
     "test:ollama": "node --env-file=.env scripts/testOllamaGrounding.js",
+    "test:ollama:nodb": "node --env-file=.env scripts/testOllamaGrounding.js --no-mongo",
     "test:router": "node scripts/testQueryRouter.js",
     "test:handlers": "node --env-file=.env scripts/testChatHandlers.js",
     "chroma:sync": "node --env-file=.env scripts/chromaExport.js",

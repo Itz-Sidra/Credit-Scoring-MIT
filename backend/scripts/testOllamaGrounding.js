@@ -15,7 +15,15 @@
  * Test a different question:
  *   QUESTION="Why was eligible amount lower?" APP_ID=<id> node backend/scripts/testOllamaGrounding.js
  *
- * Requires backend/.env (MONGO_URI, optionally OLLAMA_BASE_URL / OLLAMA_MODEL)
+ * Requires backend/.env:
+ *   - OLLAMA_* optional; MONGO_URI required unless SKIP_MONGO=1
+ *
+ * Local Node on Windows: MONGO_URI must use localhost / 127.0.0.1 (not host
+ * name "mongodb", which only resolves inside Docker Compose).
+ *
+ * Ollama only (no DB):
+ *   npm run test:ollama:nodb
+ *   or: SKIP_MONGO=1 npm run test:ollama
  */
 
 import path from "path";
@@ -55,10 +63,17 @@ async function testHealth() {
 
   const healthy = await checkOllamaHealth();
   if (!healthy) {
+    const base = ollamaConfig.baseUrl || "";
+    const dockerHostHint =
+      base.includes("host.docker.internal") || base.includes("docker.internal")
+        ? "\n     You are using a Docker-style URL. If you run this script on your PC (not inside a container),\n" +
+          "     set OLLAMA_BASE_URL=http://localhost:11434 in backend/.env\n"
+        : "";
     console.error(
       "\n  ❌ Ollama is not reachable or model not found.\n" +
       "     Make sure Ollama is running:  ollama serve\n" +
-      `     And the model is pulled:      ollama pull ${ollamaConfig.model}\n`
+      `     And the model is pulled:      ollama pull ${ollamaConfig.model}\n` +
+      dockerHostHint
     );
     process.exit(1);
   }
@@ -162,35 +177,60 @@ async function testGuardrail(card) {
   }
 }
 
+const SYNTHETIC_CARD = {
+  applicationId: "synthetic-demo",
+  applicantName: "Demo Applicant",
+  status: "under_review",
+  decision: "Hold",
+  riskLevel: "medium",
+  probabilityOfDefault: 0.22,
+  loanType: "personal",
+  requestedAmount: 250000,
+};
+
 // ── Entry ─────────────────────────────────────────────────────────────────────
 async function main() {
-  await connect();
   await testHealth();
 
-  // Resolve card to test with
+  const skipMongo =
+    process.env.SKIP_MONGO === "1" ||
+    /^true$/i.test(process.env.SKIP_MONGO || "") ||
+    process.argv.includes("--no-mongo");
+
   let card;
-  const appId = process.env.APP_ID;
-  if (appId) {
-    card = await getApplicantCardByApplicationId(appId);
-    if (!card) {
-      console.error(`❌ Application ${appId} not found.`);
-      process.exit(1);
-    }
+  if (skipMongo) {
+    console.log(
+      "SKIP_MONGO=1 — using synthetic applicant context (no database).\n"
+    );
+    card = SYNTHETIC_CARD;
   } else {
-    const cards = await getAllApplicantCards({ limit: 1 });
-    if (cards.length === 0) {
-      console.error("❌ No loan applications found in the database.");
-      process.exit(1);
+    await connect();
+
+    const appId = process.env.APP_ID;
+    if (appId) {
+      card = await getApplicantCardByApplicationId(appId);
+      if (!card) {
+        console.error(`❌ Application ${appId} not found.`);
+        process.exit(1);
+      }
+    } else {
+      const cards = await getAllApplicantCards({ limit: 1 });
+      if (cards.length === 0) {
+        console.error("❌ No loan applications found in the database.");
+        process.exit(1);
+      }
+      card = cards[0];
+      console.log(
+        `Auto-selected application: ${card.applicationId} (${card.applicantName})\n`
+      );
     }
-    card = cards[0];
-    console.log(`Auto-selected application: ${card.applicationId} (${card.applicantName})\n`);
   }
 
   await testHoldExplanation(card);
   await testImprovementSuggestion(card);
   await testGuardrail(card);
 
-  await mongoose.disconnect();
+  if (!skipMongo) await mongoose.disconnect();
   console.log("✅ Phase 3 grounding tests complete.");
 }
 
