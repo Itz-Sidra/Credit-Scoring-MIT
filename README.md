@@ -16,6 +16,14 @@ Over 1.4 billion people globally lack formal credit history. This leads to:
 - Widespread financial exclusion and missed economic growth
 Traditional credit scoring systems fail those who are unbanked or underbanked — not because they're risky, but because they're invisible to the system.
 
+## Solution:
+An end-to-end AI-powered digital underwriting platform that uses alternate data (UPI, GST, utility records) to assess creditworthiness — no credit history required.
+What makes us different:
+- No credit history required
+- Real-time, data-driven risk scoring
+- Explainable AI (SHAP insights)
+- Continuous self-learning system
+
 ## One-Command Start (Recommended)
 
 From workspace root:
