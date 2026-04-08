@@ -1,4 +1,4 @@
-# BarclaysFinal Workspace
+# Credit Score Workspace
 
 This workspace is organized for clean full-stack development with separate frontend and backend projects.
 
