@@ -31,6 +31,30 @@ const FILTER_STATUS_MAP: Record<string, string[]> = {
   "Under Review": ["pending", "under_review", "review", "hold", "processing"],
 };
 
+const safeNumber = (value: any, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+/** Unbanked headline blended score ↔ PD (matches backend alternateDisplayAlignment) */
+function alternatePdFromBlendedCreditScore(score: number): number {
+  const s = Number(score);
+  if (!Number.isFinite(s)) return 0;
+  const raw = 1 - (s - 300) / 550;
+  return Math.max(0.05, Math.min(0.95, raw));
+}
+
+function alternateRiskLevelFromScore(score: number): string {
+  const s = Number(score);
+  if (!Number.isFinite(s)) return "medium";
+  if (s >= 700) return "low";
+  if (s >= 590) return "medium";
+  return "high";
+}
+
+const formatCurrency = (value: any) =>
+  safeNumber(value, 0).toLocaleString("en-IN");
+
 export function MyLoansPage() {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -81,23 +105,53 @@ export function MyLoansPage() {
           console.log(`Processing loan: ${loan._id} - Status: ${loan.status}`);
           const backendStatus = loan.status;
           const displayStatus = loan.displayStatus || formatStatus(backendStatus);
+          const requestedAmount = safeNumber(loan.requestedAmount, 0);
+          const tenureMonths = Math.max(1, safeNumber(loan.requestedTenure, 12));
+          const rate = safeNumber(loan.aiAnalysis?.suggestedInterestRate, 12.5);
+          const monthlyRate = rate / 100 / 12;
+          const emi =
+            monthlyRate > 0
+              ? (requestedAmount * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) /
+                (Math.pow(1 + monthlyRate, tenureMonths) - 1)
+              : requestedAmount / tenureMonths;
+          const totalPayable = Math.round(emi * tenureMonths);
+          const isUnbanked =
+            loan.applicantType === "unbanked" ||
+            loan.features?.underwritingPath === "unbanked";
+          const headScore = loan.aiAnalysis?.creditScore;
+          let riskLevel = loan.aiAnalysis?.riskLevel || "medium";
+          const baseFeat = { ...(loan.features || {}) };
+          if (isUnbanked && headScore != null && Number.isFinite(Number(headScore))) {
+            const s = Number(headScore);
+            riskLevel = alternateRiskLevelFromScore(s);
+            baseFeat.probabilityOfDefault = alternatePdFromBlendedCreditScore(s);
+          }
           return {
             ...loan,
             id: loan._id,
             loanId: loan._id,
-            amount: loan.requestedAmount,
+            amount: requestedAmount,
             status: displayStatus,
             loanType: loan.loanType,
-            riskLevel: loan.aiAnalysis?.riskLevel || 'medium',
-            interestRate: loan.aiAnalysis?.suggestedInterestRate || 12.5,
-            eligibleAmount: loan.aiAnalysis?.eligibleAmount,
+            riskLevel,
+            interestRate: rate,
+            eligibleAmount: safeNumber(loan.aiAnalysis?.eligibleAmount, requestedAmount),
             creditScore: loan.aiAnalysis?.creditScore,
             applicationDate: loan.submittedAt ? new Date(loan.submittedAt).toLocaleDateString() : 'N/A',
-            tenure: loan.requestedTenure,
+            tenure: tenureMonths,
             category: normalizeLoanType(loan.loanType),
             submittedAt: loan.submittedAt,
             backendStatus,
             displayStatus,
+            rejectionReason:
+              loan.adminDecision?.rejectionReason ||
+              loan.features?.decisionReason ||
+              null,
+            emi: Math.round(emi),
+            totalPayable,
+            remainingAmount: totalPayable,
+            paidAmount: 0,
+            features: baseFeat,
           };
         });
 
@@ -224,23 +278,74 @@ export function MyLoansPage() {
     if (freshLoan) {
       const backendStatus = freshLoan.status;
       const displayStatus = freshLoan.displayStatus || formatStatus(backendStatus);
+      const isUnbankedFresh =
+        freshLoan.applicantType === "unbanked" ||
+        freshLoan.features?.underwritingPath === "unbanked";
+      const headScoreFresh = freshLoan.aiAnalysis?.creditScore;
+      let riskLevelFresh = freshLoan.aiAnalysis?.riskLevel || "medium";
+      const baseFeatFresh = { ...(freshLoan.features || {}) };
+      if (
+        isUnbankedFresh &&
+        headScoreFresh != null &&
+        Number.isFinite(Number(headScoreFresh))
+      ) {
+        const s = Number(headScoreFresh);
+        riskLevelFresh = alternateRiskLevelFromScore(s);
+        baseFeatFresh.probabilityOfDefault = alternatePdFromBlendedCreditScore(s);
+      }
       const formattedLoan = {
         ...freshLoan,
         id: freshLoan._id,
         loanId: freshLoan._id,
-        amount: freshLoan.requestedAmount,
+        amount: safeNumber(freshLoan.requestedAmount, 0),
         status: displayStatus,
         loanType: freshLoan.loanType,
-        riskLevel: freshLoan.aiAnalysis?.riskLevel || 'medium',
-        interestRate: freshLoan.aiAnalysis?.suggestedInterestRate || 12.5,
-        eligibleAmount: freshLoan.aiAnalysis?.eligibleAmount,
+        riskLevel: riskLevelFresh,
+        interestRate: safeNumber(freshLoan.aiAnalysis?.suggestedInterestRate, 12.5),
+        eligibleAmount: safeNumber(
+          freshLoan.aiAnalysis?.eligibleAmount,
+          freshLoan.requestedAmount
+        ),
         creditScore: freshLoan.aiAnalysis?.creditScore,
         applicationDate: freshLoan.submittedAt ? new Date(freshLoan.submittedAt).toLocaleDateString() : 'N/A',
-        tenure: freshLoan.requestedTenure,
+        tenure: Math.max(1, safeNumber(freshLoan.requestedTenure, 12)),
         category: normalizeLoanType(freshLoan.loanType),
         submittedAt: freshLoan.submittedAt,
         backendStatus,
         displayStatus,
+        rejectionReason:
+          freshLoan.adminDecision?.rejectionReason ||
+          freshLoan.features?.decisionReason ||
+          null,
+        emi: Math.round(
+          ((safeNumber(freshLoan.requestedAmount, 0) *
+            (safeNumber(freshLoan.aiAnalysis?.suggestedInterestRate, 12.5) / 100 / 12) *
+            Math.pow(
+              1 + safeNumber(freshLoan.aiAnalysis?.suggestedInterestRate, 12.5) / 100 / 12,
+              Math.max(1, safeNumber(freshLoan.requestedTenure, 12))
+            )) /
+            (Math.pow(
+              1 + safeNumber(freshLoan.aiAnalysis?.suggestedInterestRate, 12.5) / 100 / 12,
+              Math.max(1, safeNumber(freshLoan.requestedTenure, 12))
+            ) -
+              1)) || 0
+        ),
+        totalPayable:
+          safeNumber(freshLoan.requestedAmount, 0) +
+          Math.round(
+            Math.max(1, safeNumber(freshLoan.requestedTenure, 12)) *
+              (safeNumber(freshLoan.requestedAmount, 0) *
+                (safeNumber(freshLoan.aiAnalysis?.suggestedInterestRate, 12.5) / 100 / 12))
+          ),
+        remainingAmount:
+          safeNumber(freshLoan.requestedAmount, 0) +
+          Math.round(
+            Math.max(1, safeNumber(freshLoan.requestedTenure, 12)) *
+              (safeNumber(freshLoan.requestedAmount, 0) *
+                (safeNumber(freshLoan.aiAnalysis?.suggestedInterestRate, 12.5) / 100 / 12))
+          ),
+        paidAmount: 0,
+        features: baseFeatFresh,
       };
       // Update with fresh data
       setSelectedLoan(formattedLoan);
@@ -386,7 +491,7 @@ export function MyLoansPage() {
                 </div>
                 
                 <p className="text-[10px] md:text-xs text-black/40 font-bold tracking-widest uppercase transition-colors duration-300 leading-relaxed">
-                  ₹{loan.amount.toLocaleString()} • STATUS: <span className={loan.status === 'Approved' ? 'text-green-600 font-black' : loan.status === 'Rejected' ? 'text-red-600 font-black' : loan.status === 'Ongoing' ? 'text-blue-600 font-black' : 'text-black/60 font-black'}>{loan.status}</span>
+                  ₹{formatCurrency(loan.amount)} • STATUS: <span className={loan.status === 'Approved' ? 'text-green-600 font-black' : loan.status === 'Rejected' ? 'text-red-600 font-black' : loan.status === 'Ongoing' ? 'text-blue-600 font-black' : 'text-black/60 font-black'}>{loan.status}</span>
                 </p>
 
                 <div className="mt-auto pt-2 flex items-center text-[10px] md:text-xs font-black text-blue-600 uppercase tracking-[0.15em] group-hover:tracking-[0.2em] transition-all duration-300">
@@ -457,13 +562,13 @@ export function MyLoansPage() {
                   <div className="space-y-3">
                     <div className="flex justify-between items-end border-b border-black/10 pb-2">
                       <span className="text-xs font-black uppercase text-slate-500 tracking-widest">Requested</span>
-                      <span className="text-lg text-black font-black leading-none">₹{selectedLoan.amount?.toLocaleString() || "0"}</span>
+                      <span className="text-lg text-black font-black leading-none">₹{formatCurrency(selectedLoan.amount)}</span>
                     </div>
                     {selectedLoan.status !== "Rejected" && selectedLoan.status !== "Auto Rejected" && (
                       <>
                         <div className="flex justify-between items-end border-b border-black/10 pb-2">
                           <span className="text-xs font-black uppercase text-slate-500 tracking-widest">Eligible</span>
-                          <span className="text-xl text-blue-600 font-black leading-none">₹{selectedLoan.eligibleAmount?.toLocaleString() || "N/A"}</span>
+                          <span className="text-xl text-blue-600 font-black leading-none">₹{formatCurrency(selectedLoan.eligibleAmount)}</span>
                         </div>
                         <div className="flex justify-between items-end border-b border-black/10 pb-2">
                           <span className="text-xs font-black uppercase text-slate-500 tracking-widest">Suggested Rate</span>
@@ -497,6 +602,36 @@ export function MyLoansPage() {
                   </div>
                 </div>
 
+                {/* User-facing decision explanation */}
+                {selectedLoan.features?.userDecisionExplanation && (
+                  <div className="bg-blue-50 p-5 border-[1.5px] border-blue-700 shadow-[4px_4px_0_0_rgba(37,99,235,0.35)]">
+                    <h3 className="text-xs font-black text-blue-900 uppercase tracking-[0.2em] mb-3 border-b border-blue-300 pb-2">
+                      {selectedLoan.features.userDecisionExplanation.title || "Decision explanation"}
+                    </h3>
+                    <p className="text-sm text-blue-900/90 font-semibold mb-3">
+                      {selectedLoan.features.userDecisionExplanation.summary}
+                    </p>
+                    {Array.isArray(selectedLoan.features.userDecisionExplanation.reasons) &&
+                      selectedLoan.features.userDecisionExplanation.reasons.length > 0 && (
+                        <div className="mb-3">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-blue-800 mb-1">Why</p>
+                          {selectedLoan.features.userDecisionExplanation.reasons.map((reason: string, idx: number) => (
+                            <p key={idx} className="text-xs text-blue-900 mb-1">- {reason}</p>
+                          ))}
+                        </div>
+                      )}
+                    {Array.isArray(selectedLoan.features.userDecisionExplanation.nextSteps) &&
+                      selectedLoan.features.userDecisionExplanation.nextSteps.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-blue-800 mb-1">What to do next</p>
+                          {selectedLoan.features.userDecisionExplanation.nextSteps.map((step: string, idx: number) => (
+                            <p key={idx} className="text-xs text-blue-900 mb-1">- {step}</p>
+                          ))}
+                        </div>
+                      )}
+                  </div>
+                )}
+
                 {/* Dynamic Configuration per Status */}
                 
                 {/* 1. ONGOING / APPROVED */}
@@ -507,7 +642,7 @@ export function MyLoansPage() {
                         <div>
                           <p className="text-[10px] font-black tracking-[0.2em] text-black/50 uppercase">REPAYMENT PROGRESS</p>
                           <div className="flex justify-between items-end mt-2 mb-3">
-                            <span className="text-2xl font-black text-black tracking-tighter">₹{selectedLoan.paidAmount.toLocaleString()} <span className="text-xs font-black text-black/40 tracking-wider">PAID</span></span>
+                            <span className="text-2xl font-black text-black tracking-tighter">₹{formatCurrency(selectedLoan.paidAmount)} <span className="text-xs font-black text-black/40 tracking-wider">PAID</span></span>
                             <span className="text-sm font-black text-blue-600">{Math.round((selectedLoan.paidAmount / selectedLoan.totalPayable) * 100)}%</span>
                           </div>
                           <div className="w-full h-3 bg-black/5 border-[1.5px] border-black overflow-hidden relative">
@@ -522,11 +657,11 @@ export function MyLoansPage() {
                       <div className="grid grid-cols-2 gap-6 pt-2">
                         <div>
                           <p className="text-[10px] font-black tracking-[0.2em] text-black/50 uppercase">LOAN AMOUNT</p>
-                          <p className="text-xl md:text-2xl font-black text-black tracking-tighter mt-1">₹{selectedLoan.amount.toLocaleString()}</p>
+                          <p className="text-xl md:text-2xl font-black text-black tracking-tighter mt-1">₹{formatCurrency(selectedLoan.amount)}</p>
                         </div>
                         <div className="pl-6 border-l-[1.5px] border-black/10">
                           <p className="text-[10px] font-black tracking-[0.2em] text-black/50 uppercase">MONTHLY EMI</p>
-                          <p className="text-xl md:text-2xl font-black text-blue-600 tracking-tighter mt-1">₹{selectedLoan.emi.toLocaleString()}</p>
+                          <p className="text-xl md:text-2xl font-black text-blue-600 tracking-tighter mt-1">₹{formatCurrency(selectedLoan.emi)}</p>
                         </div>
                       </div>
                     </div>
@@ -535,8 +670,8 @@ export function MyLoansPage() {
                       <div className="flex justify-between items-center"><span className="text-black/50">START DATE</span><span className="text-black">{selectedLoan.startDate || "-"}</span></div>
                       <div className="flex justify-between items-center"><span className="text-black/50">TENURE</span><span className="text-black">{selectedLoan.tenure || "N/A"}</span></div>
                       <div className="flex justify-between items-center border-t-[1.5px] border-black/10 pt-4"><span className="text-black/50">INTEREST RATE</span><span className="text-black">{selectedLoan.interestRate}% P.A.</span></div>
-                      <div className="flex justify-between items-center"><span className="text-black/50">TOTAL PAYABLE</span><span className="text-black">₹{selectedLoan.totalPayable.toLocaleString()}</span></div>
-                      <div className="flex justify-between items-center"><span className="text-black/50">REMAINING BALANCE</span><span className="text-black">₹{selectedLoan.remainingAmount.toLocaleString()}</span></div>
+                      <div className="flex justify-between items-center"><span className="text-black/50">TOTAL PAYABLE</span><span className="text-black">₹{formatCurrency(selectedLoan.totalPayable)}</span></div>
+                      <div className="flex justify-between items-center"><span className="text-black/50">REMAINING BALANCE</span><span className="text-black">₹{formatCurrency(selectedLoan.remainingAmount)}</span></div>
                       <div className="flex justify-between items-center border-t-[1.5px] border-black/10 pt-4"><span className="text-black/50">NEXT DUE DATE</span><span className="text-green-600">{selectedLoan.nextDueDate}</span></div>
                       {selectedLoan.missedPayments > 0 && <div className="flex justify-between items-center"><span className="text-black/50">MISSED PAYMENTS</span><span className="text-red-600">{selectedLoan.missedPayments} TIMES</span></div>}
                     </div>
@@ -568,7 +703,7 @@ export function MyLoansPage() {
                     </div>
                     
                     <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
-                      <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Requested Amount</span><span className="text-slate-900 font-semibold">₹{selectedLoan.amount.toLocaleString()}</span></div>
+                      <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Requested Amount</span><span className="text-slate-900 font-semibold">₹{formatCurrency(selectedLoan.amount)}</span></div>
                       <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Application Date</span><span className="text-slate-900 font-semibold">{selectedLoan.applicationDate}</span></div>
                     </div>
 
@@ -590,12 +725,12 @@ export function MyLoansPage() {
                     </div>
 
                     <div className="space-y-3 bg-white border border-slate-200 rounded-xl p-5">
-                      <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Original Amount</span><span className="text-slate-900 font-semibold">₹{selectedLoan.amount.toLocaleString()}</span></div>
+                      <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Original Amount</span><span className="text-slate-900 font-semibold">₹{formatCurrency(selectedLoan.amount)}</span></div>
                       <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Interest Rate</span><span className="text-slate-900 font-semibold">{selectedLoan.interestRate}% p.a.</span></div>
                       <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Start Date</span><span className="text-slate-900 font-semibold">{selectedLoan.startDate || "-"}</span></div>
                       <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Close Date</span><span className="text-slate-900 font-semibold">{selectedLoan.endDate || "-"}</span></div>
                       <div className="flex justify-between text-sm border-t border-slate-200 pt-3"><span className="text-slate-600 font-medium">Tenure</span><span className="text-slate-900 font-semibold">{selectedLoan.tenure || "N/A"}</span></div>
-                      <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Total Magnitude Paid</span><span className="text-green-600 font-bold">₹{selectedLoan.totalPayable.toLocaleString()}</span></div>
+                      <div className="flex justify-between text-sm"><span className="text-slate-600 font-medium">Total Magnitude Paid</span><span className="text-green-600 font-bold">₹{formatCurrency(selectedLoan.totalPayable)}</span></div>
                     </div>
                   </div>
                 )}

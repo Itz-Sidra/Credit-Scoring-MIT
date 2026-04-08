@@ -99,7 +99,28 @@ const INTENT_RULES = [
     confidence: "high",
     test: (q) =>
       /\b(why|reason|explain|what caused|what is (the )?reason|basis|rationale|justif|what does (it|this|the) mean|how (was|is|did))\b/.test(q) &&
-      /\b(hold|reject(ed)?|approv(ed|al)|risk|high risk|low risk|score|decision|on hold|under review|declined|eligible amount|amount lower|less(er)? amount|difference)\b/.test(q),
+      /\b(hold|reject(ed)?|approv(e|ed|al)|risk|high risk|low risk|score|decision|on hold|under review|declined|eligible amount|amount lower|less(er)? amount|difference)\b/.test(q),
+  },
+
+  // ── 4b. Applicant profile facts (income, employment, business type, etc.)
+  //    Queries like "For P1 what is their income?" failed routing because they
+  //    are neither risk questions nor "show/get applicant" phrasing, and the
+  //    catch-all excludes any query that mentions credit-domain words — leaving
+  //    no matching rule. Route these to applicant_lookup (summary includes income & occupation).
+  {
+    intent: INTENTS.APPLICANT_LOOKUP,
+    confidence: "high",
+    test: (q) => {
+      const asksFact =
+        /\b(what(\s+is|\s+are|\s+was)?|whats|how much|tell me|show me|give me|do they|are they|is (he|she|they|the applicant))\b/.test(q);
+      const topicIncomeOrWork =
+        /\b(income|salary|earn|earning|earnings|revenue|turnover|monthly pay|take[\s-]?home|occupation|employment|job|employer|business owner|business type|self[- ]employ|borrower type|applicant type|salaried|msme|farmer|gig|freelance)\b/.test(q);
+      const hasApplicationContext =
+        /\b(application|applicant|loan|case|profile|borrower|customer)\b/.test(q) ||
+        /\bp\d{1,8}\b/.test(q) ||
+        OBJECT_ID_RE.test(q);
+      return asksFact && topicIncomeOrWork && hasApplicationContext;
+    },
   },
 
   // ── 5. applicant_lookup ───────────────────────────────────────────────────

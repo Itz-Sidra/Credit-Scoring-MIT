@@ -25,7 +25,8 @@
     "chroma:sync": "node --env-file=.env scripts/chromaExport.js",
     "chroma:sync:one": "node --env-file=.env scripts/chromaExport.js --id",
     "chroma:query": "python3 ai/chroma_query.py",
-    "chroma:test": "python3 ai/test_chroma.py"
+    "chroma:test": "python3 ai/test_chroma.py",
+    "test:alternate": "node scripts/test_alternate_unit.js"
   },
   "keywords": [
     "Credit",

@@ -7,6 +7,26 @@ import { apiClient } from "../services/apiClient";
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000/api';
 
+/** Matches backend alternateDisplayAlignment: PD ↔ headline blended score */
+function alternatePdFromBlendedCreditScore(score: number): number {
+  const s = Number(score);
+  if (!Number.isFinite(s)) return 0;
+  const raw = 1 - (s - 300) / 550;
+  return Math.max(0.05, Math.min(0.95, raw));
+}
+
+function alternateRiskLevelFromScore(score: number): string {
+  const s = Number(score);
+  if (!Number.isFinite(s)) return "Unknown";
+  if (s >= 700) return "Low";
+  if (s >= 590) return "Medium";
+  return "High";
+}
+
+function isUnbankedLoan(loan: any): boolean {
+  return loan?.applicantType === "unbanked" || loan?.features?.underwritingPath === "unbanked";
+}
+
 export function AdminLoanApplications() {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -27,6 +47,21 @@ export function AdminLoanApplications() {
   const [actionLoading, setActionLoading] = useState(false);
   const [explainability, setExplainability] = useState<any | null>(null);
   const [explainabilityLoading, setExplainabilityLoading] = useState(false);
+  const [alternateAttachLoading, setAlternateAttachLoading] = useState(false);
+  const [adminUpiFile, setAdminUpiFile] = useState<File | null>(null);
+  const [adminUtilityFile, setAdminUtilityFile] = useState<File | null>(null);
+
+  const formatRiskFlag = (flag: string) => {
+    if (!flag) return "unknown_flag";
+    if (flag.startsWith("ml_dependency_missing:")) {
+      const dep = flag.split(":")[1] || "unknown";
+      return `ML dependency missing (${dep})`;
+    }
+    if (flag === "ml_timeout") return "ML inference timed out";
+    if (flag === "ml_invalid_output") return "ML returned invalid output";
+    if (flag === "ml_inference_failed") return "ML inference failed";
+    return flag.length > 72 ? `${flag.slice(0, 72)}...` : flag;
+  };
 
   const STATUS_GROUPS: Record<string, string[]> = {
     Pending: ["under_review", "pending"],
@@ -95,6 +130,17 @@ export function AdminLoanApplications() {
           const creditScore =
             loan.aiAnalysis?.creditScore ?? userDetails.creditScore ?? 'N/A';
 
+          const unbanked = isUnbankedLoan(loan);
+          const aiScoreNum = Number(loan.aiAnalysis?.creditScore);
+          let displayAltPd = loan.features?.probabilityOfDefault ?? 0;
+          let displayAltRisk =
+            ((loan.aiAnalysis?.riskLevel || 'unknown') as string).charAt(0).toUpperCase() +
+            ((loan.aiAnalysis?.riskLevel || 'unknown') as string).slice(1);
+          if (unbanked && Number.isFinite(aiScoreNum)) {
+            displayAltPd = alternatePdFromBlendedCreditScore(aiScoreNum);
+            displayAltRisk = alternateRiskLevelFromScore(aiScoreNum);
+          }
+
           const loanType = loan.loanType || "";
           const typePrefixMap: Record<string, string> = {
             personal: "P",
@@ -127,9 +173,9 @@ export function AdminLoanApplications() {
               if (['rejected', 'declined'].includes(sl)) return 'rejected';
               return 'under_review';
             })(),
-            riskLevel: ((loan.aiAnalysis?.riskLevel || 'unknown') as string).charAt(0).toUpperCase() + ((loan.aiAnalysis?.riskLevel || 'unknown') as string).slice(1),
+            riskLevel: displayAltRisk,
             riskScore: loan.aiAnalysis?.creditScore || 600,
-            defaultProb: loan.features?.probabilityOfDefault ?? 0,
+            defaultProb: displayAltPd,
             interest: loan.aiAnalysis?.suggestedInterestRate ?? 0,
             decidedAmount: loan.aiAnalysis?.eligibleAmount ?? 0,
             decision: loan.features?.decision === 'Approve' ? 'APPROVE' : loan.features?.decision === 'Reject' ? 'REJECT' : 'REVIEW',
@@ -139,15 +185,43 @@ export function AdminLoanApplications() {
             rawLoan: loan,
             customDetails: {
               "Loan Type": loan.loanType,
+              "Applicant Type": loan.applicantType || "banked",
+              "Underwriting Path": loan.features?.underwritingPath || "banked_model",
               "Amount": `₹${(loan.requestedAmount / 100000).toFixed(1)}L`,
               "Tenure": `${loan.requestedTenure} months`,
               "Purpose": loan.purpose,
               "Eligible Amount": `₹${(loan.aiAnalysis?.eligibleAmount / 100000).toFixed(1)}L`,
               "Suggested Rate": `${loan.aiAnalysis?.suggestedInterestRate}% p.a.`,
               "Decision": loan.features?.decision || 'Hold',
-              "Default Probability": loan.features?.probabilityOfDefault != null ? `${(loan.features.probabilityOfDefault * 100).toFixed(1)}%` : 'N/A',
+              "Default Probability":
+                unbanked || loan.features?.probabilityOfDefault != null
+                  ? `${(displayAltPd * 100).toFixed(1)}%`
+                  : "N/A",
               "Pre-screen": loan.features?.preScreenStatus || 'N/A',
-              "Decision Reason": loan.features?.decisionReason || 'N/A'
+              "Decision Reason": loan.features?.decisionReason || 'N/A',
+              "Alt Completeness": loan.alternateUnderwriting?.dataCompletenessScore != null
+                ? `${Math.round(loan.alternateUnderwriting.dataCompletenessScore * 100)}%`
+                : "N/A",
+              "Alt Confidence": loan.alternateUnderwriting?.confidenceLevel || "N/A",
+              "Trust Score":
+                loan.alternateUnderwriting?.trustScore != null
+                  ? `${Math.round(loan.alternateUnderwriting.trustScore * 100)}%`
+                  : loan.alternateUnderwriting?.explanationMetadata?.trustScore != null
+                    ? `${Math.round(loan.alternateUnderwriting.explanationMetadata.trustScore * 100)}%`
+                    : "N/A",
+              "Fraud Risk":
+                loan.alternateUnderwriting?.fraudRiskScore != null
+                  ? `${Math.round(loan.alternateUnderwriting.fraudRiskScore * 100)}%`
+                  : loan.alternateUnderwriting?.explanationMetadata?.fraudRiskScore != null
+                    ? `${Math.round(loan.alternateUnderwriting.explanationMetadata.fraudRiskScore * 100)}%`
+                    : "N/A",
+              ...(loan.applicantType === "unbanked"
+                ? {
+                    "Alt Reference ID": loan.alternateReferenceId || "—",
+                    "Alt scoring method": loan.alternateUnderwriting?.scoringMethod || "—",
+                    "Admin vault/source": loan.alternateUnderwriting?.adminAttached?.source || "—",
+                  }
+                : {}),
             }
           };
         });
@@ -188,6 +262,58 @@ export function AdminLoanApplications() {
       console.error('[Admin] Error fetching loan details:', err);
       return null;
     }
+  };
+
+  const attachAlternateVault = async (loanId: string) => {
+    setAlternateAttachLoading(true);
+      try {
+        const res = await apiClient.post(
+          `${API_BASE_URL}/admin/loans/${loanId}/alternate/vault`,
+          {}
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(data.message || "Vault attach failed");
+          return;
+        }
+        await fetchLoans();
+        alert(data.message || "Vault data attached");
+      } finally {
+        setAlternateAttachLoading(false);
+      }
+  };
+
+  const uploadAdminAlternateCsv = async (loanId: string) => {
+    if (!adminUpiFile && !adminUtilityFile) {
+      alert("Choose at least one CSV (UPI and/or utility)");
+      return;
+    }
+    setAlternateAttachLoading(true);
+      try {
+        const form = new FormData();
+        if (adminUpiFile) form.append("upi", adminUpiFile);
+        if (adminUtilityFile) form.append("utility", adminUtilityFile);
+        const token = localStorage.getItem("accessToken");
+        const res = await fetch(
+          `${API_BASE_URL}/admin/loans/${loanId}/alternate/upload`,
+          {
+            method: "POST",
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            body: form,
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(data.message || "Upload failed");
+          return;
+        }
+        setAdminUpiFile(null);
+        setAdminUtilityFile(null);
+        await fetchLoans();
+        alert(data.message || "Verified CSVs attached");
+      } finally {
+        setAlternateAttachLoading(false);
+      }
   };
 
   const fetchExplainability = async (loanId: string) => {
@@ -233,6 +359,16 @@ export function AdminLoanApplications() {
       const prefix = typePrefixMap[loanType] || "X";
       const fallbackCode = `${prefix}${String(freshLoan._id || "").slice(-4).toUpperCase()}`;
       const loanCode = freshLoan.loanCode || fallbackCode;
+      const unbankedFresh = isUnbankedLoan(freshLoan);
+      const aiScoreFresh = Number(freshLoan.aiAnalysis?.creditScore);
+      let displayAltPdFresh = freshLoan.features?.probabilityOfDefault ?? 0;
+      let displayAltRiskFresh =
+        ((freshLoan.aiAnalysis?.riskLevel || 'unknown') as string).charAt(0).toUpperCase() +
+        ((freshLoan.aiAnalysis?.riskLevel || 'unknown') as string).slice(1);
+      if (unbankedFresh && Number.isFinite(aiScoreFresh)) {
+        displayAltPdFresh = alternatePdFromBlendedCreditScore(aiScoreFresh);
+        displayAltRiskFresh = alternateRiskLevelFromScore(aiScoreFresh);
+      }
       const updatedLoan = {
         id: freshLoan._id,
         loanCode,
@@ -254,9 +390,9 @@ export function AdminLoanApplications() {
           if (['rejected', 'declined'].includes(sl)) return 'rejected';
           return 'under_review';
         })(),
-        riskLevel: ((freshLoan.aiAnalysis?.riskLevel || 'unknown') as string).charAt(0).toUpperCase() + ((freshLoan.aiAnalysis?.riskLevel || 'unknown') as string).slice(1),
+        riskLevel: displayAltRiskFresh,
         riskScore: freshLoan.aiAnalysis?.creditScore || 600,
-        defaultProb: freshLoan.features?.probabilityOfDefault ?? 0,
+        defaultProb: displayAltPdFresh,
         interest: freshLoan.aiAnalysis?.suggestedInterestRate ?? 0,
         decidedAmount: freshLoan.aiAnalysis?.eligibleAmount ?? 0,
         decision: freshLoan.features?.decision === 'Approve' ? 'APPROVE' : freshLoan.features?.decision === 'Reject' ? 'REJECT' : 'REVIEW',
@@ -266,15 +402,30 @@ export function AdminLoanApplications() {
         rawLoan: freshLoan,
         customDetails: {
           "Loan Type": freshLoan.loanType,
+          "Applicant Type": freshLoan.applicantType || "banked",
+          "Underwriting Path": freshLoan.features?.underwritingPath || "banked_model",
           "Amount": `₹${(freshLoan.requestedAmount / 100000).toFixed(1)}L`,
           "Tenure": `${freshLoan.requestedTenure} months`,
           "Purpose": freshLoan.purpose,
           "Eligible Amount": `₹${(freshLoan.aiAnalysis?.eligibleAmount / 100000).toFixed(1)}L`,
           "Suggested Rate": `${freshLoan.aiAnalysis?.suggestedInterestRate}% p.a.`,
           "Decision": freshLoan.features?.decision || 'Hold',
-          "Default Probability": freshLoan.features?.probabilityOfDefault != null ? `${(freshLoan.features.probabilityOfDefault * 100).toFixed(1)}%` : 'N/A',
+          "Default Probability":
+            unbankedFresh || freshLoan.features?.probabilityOfDefault != null
+              ? `${(displayAltPdFresh * 100).toFixed(1)}%`
+              : "N/A",
           "Pre-screen": freshLoan.features?.preScreenStatus || 'N/A',
-          "Decision Reason": freshLoan.features?.decisionReason || 'N/A'
+          "Decision Reason": freshLoan.features?.decisionReason || 'N/A',
+          "Alt Completeness": freshLoan.alternateUnderwriting?.dataCompletenessScore != null
+            ? `${Math.round(freshLoan.alternateUnderwriting.dataCompletenessScore * 100)}%`
+            : "N/A",
+          "Alt Confidence": freshLoan.alternateUnderwriting?.confidenceLevel || "N/A"
+          ,"Trust Score": freshLoan.alternateUnderwriting?.explanationMetadata?.trustScore != null
+            ? `${Math.round(freshLoan.alternateUnderwriting.explanationMetadata.trustScore * 100)}%`
+            : "N/A"
+          ,"Fraud Risk": freshLoan.alternateUnderwriting?.explanationMetadata?.fraudRiskScore != null
+            ? `${Math.round(freshLoan.alternateUnderwriting.explanationMetadata.fraudRiskScore * 100)}%`
+            : "N/A"
         }
       };
 
@@ -729,6 +880,54 @@ export function AdminLoanApplications() {
                 </div>
               </div>
 
+              {loan.rawLoan?.applicantType === "unbanked" && (
+                <div className="bg-amber-50 border-[1.5px] border-black p-5 shadow-[4px_4px_0_0_rgba(0,0,0,1)] space-y-3">
+                  <h3 className="text-xs font-black uppercase tracking-[0.2em] border-b border-black pb-2">
+                    Unbanked — verified alternate data
+                  </h3>
+                  <p className="text-[11px] font-bold text-slate-700">
+                    Reference ID:{" "}
+                    <span className="font-black">{loan.rawLoan.alternateReferenceId || "—"}</span>
+                  </p>
+                  <p className="text-[10px] text-slate-600">
+                    Demo vault keys: AAAAA1111A (strong both), BBBBB2222B (weak both), CCCCC3333C (UPI
+                    only), DDDDD4444D (utility only), EEEEE5555E (no files).
+                  </p>
+                  <button
+                    type="button"
+                    disabled={alternateAttachLoading}
+                    onClick={() => attachAlternateVault(String(loan.id))}
+                    className="w-full text-xs font-black uppercase border-[1.5px] border-black bg-black text-white py-2 hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {alternateAttachLoading ? "Working…" : "Load demo vault for this reference ID"}
+                  </button>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase block">Verified UPI CSV (admin)</label>
+                    <input
+                      type="file"
+                      accept=".csv"
+                      className="text-xs w-full"
+                      onChange={(e) => setAdminUpiFile(e.target.files?.[0] || null)}
+                    />
+                    <label className="text-[10px] font-black uppercase block">Verified utility CSV (admin)</label>
+                    <input
+                      type="file"
+                      accept=".csv"
+                      className="text-xs w-full"
+                      onChange={(e) => setAdminUtilityFile(e.target.files?.[0] || null)}
+                    />
+                    <button
+                      type="button"
+                      disabled={alternateAttachLoading}
+                      onClick={() => uploadAdminAlternateCsv(String(loan.id))}
+                      className="w-full text-xs font-black uppercase border-[1.5px] border-black bg-white py-2 hover:bg-slate-100 disabled:opacity-50"
+                    >
+                      Attach verified CSVs &amp; re-score
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Explainability */}
               <div className="bg-black p-5 border-[1.5px] border-black shadow-[4px_4px_0_0_rgba(37,99,235,0.5)]">
                 <h3 className="text-xs font-black text-white uppercase tracking-[0.2em] mb-4 border-b-[1.5px] border-white/20 pb-2">Model Explainability</h3>
@@ -777,13 +976,33 @@ export function AdminLoanApplications() {
                         )}
                       </div>
                     )}
+                    {explainability.alternate?.mlShap?.topFeatures?.length > 0 && (
+                      <div className="pt-3 border-t border-white/15">
+                        <p className="text-[11px] font-semibold text-blue-200 mb-2 uppercase tracking-widest">
+                          Alternate model (SHAP)
+                        </p>
+                        <ul className="space-y-1 max-h-40 overflow-y-auto">
+                          {explainability.alternate.mlShap.topFeatures.map(
+                            (row: { name: string; shapValue: number }, idx: number) => (
+                              <li
+                                key={idx}
+                                className="text-[11px] text-white/90 flex justify-between gap-2"
+                              >
+                                <span className="truncate">{row.name}</span>
+                                <span className="font-mono shrink-0">{row.shapValue}</span>
+                              </li>
+                            )
+                          )}
+                        </ul>
+                      </div>
+                    )}
                     {Array.isArray(explainability.flags) && explainability.flags.length > 0 && (
                       <div className="pt-3 border-t border-white/15">
                         <p className="text-[11px] font-semibold text-white/80 mb-2 uppercase tracking-widest">Risk Flags</p>
                         <div className="flex flex-wrap gap-1">
                           {explainability.flags.slice(0, 8).map((flag: string, idx: number) => (
                             <span key={idx} className="text-[11px] px-2 py-1 rounded bg-amber-100 text-amber-900 border border-amber-300">
-                              {flag}
+                              {formatRiskFlag(flag)}
                             </span>
                           ))}
                         </div>

@@ -72,6 +72,55 @@ const loanApplicationSchema = new mongoose.Schema({
     default: {},
   },
 
+  applicantType: {
+    type: String,
+    enum: ["banked", "unbanked"],
+    default: "banked",
+  },
+
+  alternateReferenceId: { type: String, index: true },
+  alternateReferenceIdType: {
+    type: String,
+    enum: ["pan", "bank_account_masked", "other"],
+    default: "pan",
+  },
+  alternateUserSignals: {
+    hasUpiHint: { type: Boolean, default: false },
+    hasUtilityHint: { type: Boolean, default: false },
+  },
+
+  alternateUnderwriting: {
+    sourceFlags: { type: Object, default: {} },
+    alternateData: { type: Object, default: {} },
+    dataCompletenessScore: { type: Number },
+    alternateRiskScore: { type: Number },
+    confidenceLevel: {
+      type: String,
+      enum: ["low", "medium", "high"],
+    },
+    reliabilityFlag: {
+      type: String,
+      enum: ["insufficient_data", "partial_data", "sufficient_data"],
+    },
+    scoringMethod: { type: String },
+    scoringVersion: { type: String },
+    decision: {
+      type: String,
+      enum: ["approve", "review", "reject"],
+    },
+    riskBand: {
+      type: String,
+      enum: ["low", "medium", "high"],
+    },
+    reasons: { type: [String], default: [] },
+    warnings: { type: [String], default: [] },
+    normalizedFeaturesSummary: { type: Object, default: {} },
+    explanationMetadata: { type: Object, default: {} },
+    adminAttached: { type: Object, default: {} },
+    heuristicBaselineScore: { type: Number },
+    mlFeatureVector: { type: Object, default: {} },
+  },
+
   // Application status
   status: {
     type: String,

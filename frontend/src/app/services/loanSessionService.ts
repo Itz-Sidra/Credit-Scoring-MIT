@@ -3,6 +3,7 @@
 
 interface LoanFormState {
   step: number;
+  applicantType: "banked" | "unbanked" | null;
   loanType: string | null;
   incomeRange: string;
   hasExistingLoan: string;
@@ -44,6 +45,27 @@ interface LoanFormState {
   // Biometrics
   faceScanImage: string | null;
   coAppFaceScanImage: string | null;
+  // Alternate underwriting
+  alternateDataConsent: boolean;
+  upiMonthlyInflow: string;
+  upiMonthlyOutflow: string;
+  avgMonthlyTransactionCount: string;
+  transactionRegularity: string;
+  upiInflowVariance: string;
+  gstConsistency: string;
+  utilityPaymentRegularity: string;
+  rentPaymentConsistency: string;
+  declaredMonthlyIncome: string;
+  employmentOrBusinessType: string;
+  monthsUpiHistory: string;
+  monthsGstHistory: string;
+  monthsUtilityHistory: string;
+  monthsRentHistory: string;
+  quickApplyUnbanked: boolean;
+  alternateReferenceId: string;
+  alternateReferenceIdType: "pan" | "bank_account_masked" | "other";
+  hasUpiHint: boolean;
+  hasUtilityHint: boolean;
 }
 
 const SESSION_KEY = "loan_application_session";

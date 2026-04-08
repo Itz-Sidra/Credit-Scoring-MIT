@@ -77,7 +77,18 @@ export function deriveFactors(card) {
 
   // ── AML / Pre-screen ──────────────────────────────────────────────────────
   if (Array.isArray(card.amlFlags) && card.amlFlags.length > 0) {
-    negative.push(`AML/pre-screen flags triggered: ${card.amlFlags.join(", ")}`);
+    const meaningfulFlags = card.amlFlags.filter(
+      (flag) =>
+        !String(flag).startsWith("ml_inference_failed") &&
+        !String(flag).startsWith("ml_dependency_missing") &&
+        !String(flag).startsWith("ml_timeout") &&
+        !String(flag).startsWith("ml_invalid_output")
+    );
+    if (meaningfulFlags.length > 0) {
+      negative.push(`AML/pre-screen flags triggered: ${meaningfulFlags.join(", ")}`);
+    } else {
+      negative.push("Model fallback used — review recommended before final decision");
+    }
   }
   if (card.preScreenStatus === "reject") {
     negative.push("Failed automated pre-screen — hard-reject flag(s) detected");

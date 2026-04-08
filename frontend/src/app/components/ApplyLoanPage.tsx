@@ -12,12 +12,20 @@ import { useAuth } from "../contexts/AuthContext";
 import { loanSessionService } from "../services/loanSessionService";
 import { apiClient } from "../services/apiClient";
 
+function formatInrDisplay(value: string | number | undefined | null): string {
+  const raw = String(value ?? "").replace(/,/g, "").trim();
+  const n = Number(raw);
+  if (!Number.isFinite(n) || raw === "") return "—";
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
+}
+
 export function ApplyLoanPage() {
   const navigate = useNavigate();
   const { logout } = useAuth();
   const [step, setStep] = useState(0);
 
   // Form State
+  const [applicantType, setApplicantType] = useState<"banked" | "unbanked" | null>(null);
   const [loanType, setLoanType] = useState<string | null>(null);
   const [incomeRange, setIncomeRange] = useState("");
   const [hasExistingLoan, setHasExistingLoan] = useState("no");
@@ -141,6 +149,35 @@ export function ApplyLoanPage() {
   const [stepError, setStepError] = useState<string | null>(null);
   const [assetsConfirmed, setAssetsConfirmed] = useState(false);
   const [finalConfirmed, setFinalConfirmed] = useState(false);
+  const [alternateDataConsent, setAlternateDataConsent] = useState(false);
+  const [upiMonthlyInflow, setUpiMonthlyInflow] = useState("");
+  const [upiMonthlyOutflow, setUpiMonthlyOutflow] = useState("");
+  const [avgMonthlyTransactionCount, setAvgMonthlyTransactionCount] = useState("");
+  const [transactionRegularity, setTransactionRegularity] = useState("");
+  const [upiInflowVariance, setUpiInflowVariance] = useState("");
+  const [gstConsistency, setGstConsistency] = useState("");
+  const [utilityPaymentRegularity, setUtilityPaymentRegularity] = useState("");
+  const [rentPaymentConsistency, setRentPaymentConsistency] = useState("");
+  const [declaredMonthlyIncome, setDeclaredMonthlyIncome] = useState("");
+  const [employmentOrBusinessType, setEmploymentOrBusinessType] = useState("");
+  const [monthsUpiHistory, setMonthsUpiHistory] = useState("");
+  const [monthsGstHistory, setMonthsGstHistory] = useState("");
+  const [monthsUtilityHistory, setMonthsUtilityHistory] = useState("");
+  const [monthsRentHistory, setMonthsRentHistory] = useState("");
+  const [showAdvancedUnbanked, setShowAdvancedUnbanked] = useState(false);
+  const [quickApplyUnbanked, setQuickApplyUnbanked] = useState(true);
+  const [alternateSourceType, setAlternateSourceType] = useState<"upi" | "utility">("upi");
+  const [alternateDataFile, setAlternateDataFile] = useState<File | null>(null);
+  const [alternateIngestionLoading, setAlternateIngestionLoading] = useState(false);
+  const [alternateIngestionMessage, setAlternateIngestionMessage] = useState<string | null>(null);
+  const [alternateIngestionSuccess, setAlternateIngestionSuccess] = useState(false);
+  const [showIngestedOverride, setShowIngestedOverride] = useState(false);
+  const [alternateReferenceId, setAlternateReferenceId] = useState("");
+  const [alternateReferenceIdType, setAlternateReferenceIdType] = useState<
+ "pan" | "bank_account_masked" | "other"
+ >("pan");
+  const [hasUpiHint, setHasUpiHint] = useState(false);
+  const [hasUtilityHint, setHasUtilityHint] = useState(false);
 
   const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000/api';
 
@@ -166,6 +203,7 @@ export function ApplyLoanPage() {
     if (savedSession) {
       // Restore all state from session
       if (savedSession.step) setStep(savedSession.step);
+      if (savedSession.applicantType) setApplicantType(savedSession.applicantType as "banked" | "unbanked");
       if (savedSession.loanType) setLoanType(savedSession.loanType);
       if (savedSession.incomeRange) setIncomeRange(savedSession.incomeRange);
       if (savedSession.hasExistingLoan) setHasExistingLoan(savedSession.hasExistingLoan);
@@ -196,6 +234,32 @@ export function ApplyLoanPage() {
       if (savedSession.businessType) setBusinessType(savedSession.businessType);
       if (savedSession.faceScanImage) setFaceScanImage(savedSession.faceScanImage);
       if (savedSession.coAppFaceScanImage) setCoAppFaceScanImage(savedSession.coAppFaceScanImage);
+      if (savedSession.alternateDataConsent) setAlternateDataConsent(Boolean(savedSession.alternateDataConsent));
+      if (savedSession.upiMonthlyInflow) setUpiMonthlyInflow(savedSession.upiMonthlyInflow);
+      if (savedSession.upiMonthlyOutflow) setUpiMonthlyOutflow(savedSession.upiMonthlyOutflow);
+      if (savedSession.avgMonthlyTransactionCount) setAvgMonthlyTransactionCount(savedSession.avgMonthlyTransactionCount);
+      if (savedSession.transactionRegularity) setTransactionRegularity(savedSession.transactionRegularity);
+      if (savedSession.upiInflowVariance) setUpiInflowVariance(savedSession.upiInflowVariance);
+      if (savedSession.gstConsistency) setGstConsistency(savedSession.gstConsistency);
+      if (savedSession.utilityPaymentRegularity) setUtilityPaymentRegularity(savedSession.utilityPaymentRegularity);
+      if (savedSession.rentPaymentConsistency) setRentPaymentConsistency(savedSession.rentPaymentConsistency);
+      if (savedSession.declaredMonthlyIncome) setDeclaredMonthlyIncome(savedSession.declaredMonthlyIncome);
+      if (savedSession.employmentOrBusinessType) setEmploymentOrBusinessType(savedSession.employmentOrBusinessType);
+      if (savedSession.monthsUpiHistory) setMonthsUpiHistory(savedSession.monthsUpiHistory);
+      if (savedSession.monthsGstHistory) setMonthsGstHistory(savedSession.monthsGstHistory);
+      if (savedSession.monthsUtilityHistory) setMonthsUtilityHistory(savedSession.monthsUtilityHistory);
+      if (savedSession.monthsRentHistory) setMonthsRentHistory(savedSession.monthsRentHistory);
+      if (savedSession.quickApplyUnbanked !== undefined) {
+        setQuickApplyUnbanked(Boolean(savedSession.quickApplyUnbanked));
+      }
+      if (savedSession.alternateReferenceId) setAlternateReferenceId(savedSession.alternateReferenceId);
+      if (savedSession.alternateReferenceIdType) {
+        setAlternateReferenceIdType(
+          savedSession.alternateReferenceIdType as "pan" | "bank_account_masked" | "other"
+        );
+      }
+      if (savedSession.hasUpiHint !== undefined) setHasUpiHint(Boolean(savedSession.hasUpiHint));
+      if (savedSession.hasUtilityHint !== undefined) setHasUtilityHint(Boolean(savedSession.hasUtilityHint));
 
       console.log("✓ Loan application session restored");
     }
@@ -239,6 +303,7 @@ export function ApplyLoanPage() {
     if (loanType && !disableAutoSave) { // Only save if a loan type has been selected AND not submitting
       loanSessionService.saveFormState({
         step,
+        applicantType,
         loanType,
         incomeRange,
         hasExistingLoan,
@@ -269,9 +334,29 @@ export function ApplyLoanPage() {
         businessType,
         faceScanImage,
         coAppFaceScanImage,
+        alternateDataConsent,
+        upiMonthlyInflow,
+        upiMonthlyOutflow,
+        avgMonthlyTransactionCount,
+        transactionRegularity,
+        upiInflowVariance,
+        gstConsistency,
+        utilityPaymentRegularity,
+        rentPaymentConsistency,
+        declaredMonthlyIncome,
+        employmentOrBusinessType,
+        monthsUpiHistory,
+        monthsGstHistory,
+        monthsUtilityHistory,
+        monthsRentHistory,
+        quickApplyUnbanked,
+        alternateReferenceId,
+        alternateReferenceIdType,
+        hasUpiHint,
+        hasUtilityHint,
       });
     }
-  }, [step, loanType, incomeRange, hasExistingLoan, existingEmi, dependents, coApplicant, loanAmount, tenure, occupation, gender, maritalStatus, familyMembersCount, childrenCount, dateOfBirth, age, courseName, university, studyLocation, courseDuration, homeArea, bhk, homeLocation, estimatedPrice, autoType, autoModel, autoPrice, autoDetails, businessType, faceScanImage, coAppFaceScanImage, disableAutoSave]);
+  }, [step, applicantType, loanType, incomeRange, hasExistingLoan, existingEmi, dependents, coApplicant, loanAmount, tenure, occupation, gender, maritalStatus, familyMembersCount, childrenCount, dateOfBirth, age, courseName, university, studyLocation, courseDuration, homeArea, bhk, homeLocation, estimatedPrice, autoType, autoModel, autoPrice, autoDetails, businessType, faceScanImage, coAppFaceScanImage, alternateDataConsent, upiMonthlyInflow, upiMonthlyOutflow, avgMonthlyTransactionCount, transactionRegularity, upiInflowVariance, gstConsistency, utilityPaymentRegularity, rentPaymentConsistency, declaredMonthlyIncome, employmentOrBusinessType, monthsUpiHistory, monthsGstHistory, monthsUtilityHistory, monthsRentHistory, quickApplyUnbanked, alternateReferenceId, alternateReferenceIdType, hasUpiHint, hasUtilityHint, disableAutoSave]);
 
   // Camera Handlers
   const startCamera = (forWhom: "applicant" | "coApplicant") => {
@@ -415,6 +500,11 @@ export function ApplyLoanPage() {
   // Mock checking EMI risk
   // Assume generic income mapping for calculation purposes
   const getIncomeValue = () => {
+    if (applicantType === "unbanked") {
+      const declared = Number(declaredMonthlyIncome || 0);
+      const inflow = Number(upiMonthlyInflow || 0);
+      return Math.max(declared, inflow, 30000);
+    }
     if (incomeRange === "<2L") return 15000;
     if (incomeRange === "2-5L") return 30000;
     if (incomeRange === "5-10L") return 60000;
@@ -426,7 +516,12 @@ export function ApplyLoanPage() {
   const emiPercentage = (emi / assumedMonthlyIncome) * 100;
 
   const getEmiRisk = () => {
-    if (!incomeRange) return { text: "Select income to see risk", color: "text-gray-400", bg: "bg-gray-400/10" };
+    if (applicantType !== "unbanked" && !incomeRange) {
+      return { text: "Select income to see risk", color: "text-gray-400", bg: "bg-gray-400/10" };
+    }
+    if (applicantType === "unbanked" && !declaredMonthlyIncome && !upiMonthlyInflow) {
+      return { text: "Enter declared income or UPI inflow to see risk", color: "text-gray-400", bg: "bg-gray-400/10" };
+    }
     if (emiPercentage < 30) return { text: "Comfortable (below 30%)", color: "text-green-400", bg: "bg-green-400/10" };
     if (emiPercentage <= 40) return { text: "Manageable (30-40%)", color: "text-yellow-400", bg: "bg-yellow-400/10" };
     return { text: "High risk (above 40%)", color: "text-red-400", bg: "bg-red-400/10" };
@@ -440,7 +535,8 @@ export function ApplyLoanPage() {
     if (!loanType) errors.push("Loan type is required");
     if (!loanAmount[0]) errors.push("Loan amount is required");
     if (!tenure) errors.push("Tenure is required");
-    if (!incomeRange) errors.push("Income range is required");
+    if (applicantType !== "unbanked" && !incomeRange) errors.push("Income range is required");
+    if (!applicantType) errors.push("Applicant type is required");
 
     // Personal details
     if (!dateOfBirth) errors.push("Date of birth is required");
@@ -471,6 +567,21 @@ export function ApplyLoanPage() {
 
     if (loanType === 'business') {
       if (!businessType) errors.push("Business type (MSME/Large) is required for business loans");
+    }
+
+    if (applicantType === "unbanked") {
+      if (!alternateDataConsent) errors.push("Alternate data consent is required");
+      const refOk = String(alternateReferenceId || "").trim().length >= 4;
+      if (!refOk) errors.push("Reference ID is required (e.g. PAN or bank reference, min 4 characters)");
+      if (!quickApplyUnbanked) {
+        if (!upiMonthlyOutflow) errors.push("Monthly UPI outflow is required");
+        if (!avgMonthlyTransactionCount)
+          errors.push("Average monthly transaction count is required");
+        if (!transactionRegularity)
+          errors.push("Transaction regularity score is required");
+      }
+      if (!declaredMonthlyIncome && !upiMonthlyInflow)
+        errors.push("Monthly inflow or declared income is required");
     }
 
     return errors;
@@ -505,6 +616,51 @@ export function ApplyLoanPage() {
     }
   };
 
+  const handleAlternateDataUpload = async () => {
+    if (!alternateDataFile) {
+      setAlternateIngestionMessage("Please choose a CSV file first.");
+      return;
+    }
+    setAlternateIngestionLoading(true);
+    setAlternateIngestionMessage(null);
+    try {
+      const token = localStorage.getItem("accessToken");
+      const form = new FormData();
+      form.append("file", alternateDataFile);
+      form.append("sourceType", alternateSourceType);
+      const res = await fetch(`${API_BASE_URL}/loan/upload-alternate-data`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAlternateIngestionSuccess(false);
+        setAlternateIngestionMessage(data?.message || "Could not parse alternate data file.");
+        return;
+      }
+      const summary = data?.summary || {};
+      if (alternateSourceType === "upi") {
+        if (summary.monthlyInflow != null) setUpiMonthlyInflow(String(summary.monthlyInflow));
+        if (summary.monthlyOutflow != null) setUpiMonthlyOutflow(String(summary.monthlyOutflow));
+        if (summary.avgMonthlyTransactionCount != null) setAvgMonthlyTransactionCount(String(summary.avgMonthlyTransactionCount));
+        if (summary.transactionRegularity != null) setTransactionRegularity(String(summary.transactionRegularity));
+        if (summary.monthsHistory != null) setMonthsUpiHistory(String(summary.monthsHistory));
+      } else {
+        if (summary.utilityPaymentRegularity != null) setUtilityPaymentRegularity(String(summary.utilityPaymentRegularity));
+        if (summary.monthsHistory != null) setMonthsUtilityHistory(String(summary.monthsHistory));
+      }
+      setAlternateIngestionSuccess(true);
+      setShowIngestedOverride(false);
+      setAlternateIngestionMessage("Alternate data ingested successfully. Review and submit.");
+    } catch {
+      setAlternateIngestionSuccess(false);
+      setAlternateIngestionMessage("Upload failed. Please try again.");
+    } finally {
+      setAlternateIngestionLoading(false);
+    }
+  };
+
   const handleSubmit = async () => {
     // Validate required fields first
     const validationErrors = validateRequiredFields();
@@ -535,6 +691,10 @@ export function ApplyLoanPage() {
             loanAmount[0];
 
       const resolvedOccupation = loanType === 'education' ? (occupation || 'Student') : occupation;
+      const resolvedIncomeAnnual =
+        applicantType === "unbanked"
+          ? (declaredMonthlyIncome ? Number(declaredMonthlyIncome) * 12 : null)
+          : mapIncomeRangeToAnnual(incomeRange);
       const educationDetails = loanType === 'education'
         ? {
           courseName,
@@ -546,6 +706,7 @@ export function ApplyLoanPage() {
 
       // Prepare loan application data for backend
       const applicationPayload = {
+        applicantType,
         loanType,
         requestedAmount: loanAmount[0],
         requestedTenure: Number(tenure),
@@ -560,7 +721,7 @@ export function ApplyLoanPage() {
         },
         applicantProfile: {
           occupation: resolvedOccupation || null,
-          incomeAnnual: mapIncomeRangeToAnnual(incomeRange),
+          incomeAnnual: resolvedIncomeAnnual,
           incomeType: deriveIncomeTypeForModel(resolvedOccupation),
           familyMembersCount: familyMembersCount ? Number(familyMembersCount) : null,
           childrenCount: childrenCount ? Number(childrenCount) : null,
@@ -569,6 +730,55 @@ export function ApplyLoanPage() {
           hasExistingLoan,
           existingEmi: existingEmi ? Number(existingEmi) : null,
         },
+        ...(applicantType === "unbanked" && {
+          alternateDataConsent,
+          alternateReferenceId: String(alternateReferenceId || "").trim().toUpperCase(),
+          alternateReferenceIdType,
+          alternateUserSignals: {
+            hasUpiHint,
+            hasUtilityHint,
+          },
+          alternateData: {
+            quickApply: quickApplyUnbanked,
+            userSuppliedCsv: Boolean(alternateIngestionSuccess),
+            upi: {
+              monthlyInflow: upiMonthlyInflow ? Number(upiMonthlyInflow) : 0,
+              monthlyOutflow: upiMonthlyOutflow ? Number(upiMonthlyOutflow) : (quickApplyUnbanked ? 0 : 0),
+              avgMonthlyTransactionCount: avgMonthlyTransactionCount
+                ? Number(avgMonthlyTransactionCount)
+                : (quickApplyUnbanked ? 12 : 0),
+              transactionRegularity: transactionRegularity
+                ? Number(transactionRegularity)
+                : (quickApplyUnbanked ? 0.55 : 0),
+              inflowVariance: upiInflowVariance ? Number(upiInflowVariance) : 0,
+            },
+            gst: {
+              filingConsistency: gstConsistency ? Number(gstConsistency) : 0,
+            },
+            utility: {
+              paymentRegularity: utilityPaymentRegularity
+                ? Number(utilityPaymentRegularity)
+                : 0,
+            },
+            rent: {
+              paymentConsistency: rentPaymentConsistency
+                ? Number(rentPaymentConsistency)
+                : 0,
+            },
+            monthsOfHistory: {
+              upi: monthsUpiHistory ? Number(monthsUpiHistory) : 0,
+              gst: monthsGstHistory ? Number(monthsGstHistory) : 0,
+              utility: monthsUtilityHistory ? Number(monthsUtilityHistory) : 0,
+              rent: monthsRentHistory ? Number(monthsRentHistory) : 0,
+            },
+            declaredIncome: {
+              monthlyIncome: declaredMonthlyIncome
+                ? Number(declaredMonthlyIncome)
+                : 0,
+            },
+            employmentType: employmentOrBusinessType || null,
+          },
+        }),
         ...(loanType === 'education' && { educationDetails }),
         ...(loanType === 'home' && {
           homeDetails: {
@@ -616,6 +826,7 @@ export function ApplyLoanPage() {
 
         // Reset all form state immediately
         setStep(0);
+        setApplicantType(null);
         setLoanType(null);
         setIncomeRange("");
         setHasExistingLoan("no");
@@ -631,6 +842,28 @@ export function ApplyLoanPage() {
         setChildrenCount("");
         setDateOfBirth("");
         setAge("");
+        setAlternateDataConsent(false);
+        setUpiMonthlyInflow("");
+        setUpiMonthlyOutflow("");
+        setAvgMonthlyTransactionCount("");
+        setTransactionRegularity("");
+        setUpiInflowVariance("");
+        setGstConsistency("");
+        setUtilityPaymentRegularity("");
+        setRentPaymentConsistency("");
+        setDeclaredMonthlyIncome("");
+        setEmploymentOrBusinessType("");
+        setMonthsUpiHistory("");
+        setMonthsGstHistory("");
+        setMonthsUtilityHistory("");
+        setMonthsRentHistory("");
+        setQuickApplyUnbanked(true);
+        setAlternateIngestionSuccess(false);
+        setShowIngestedOverride(false);
+        setAlternateReferenceId("");
+        setAlternateReferenceIdType("pan");
+        setHasUpiHint(false);
+        setHasUtilityHint(false);
         console.log('Form state reset');
 
         // Navigate to My Loans to show submitted application
@@ -664,7 +897,8 @@ export function ApplyLoanPage() {
       if (!dateOfBirth) errors.push("- Date of Birth");
       if (!gender) errors.push("- Gender");
       if (!maritalStatus) errors.push("- Marital Status");
-      if (!incomeRange) errors.push("- Income Range");
+      if (applicantType !== "unbanked" && !incomeRange) errors.push("- Income Range");
+      if (applicantType === "unbanked" && !alternateDataConsent) errors.push("- Alternate data consent");
     } else if (step === 2) {
       if (loanType === 'education') {
         if (!courseName) errors.push("- Course Name");
@@ -798,12 +1032,52 @@ export function ApplyLoanPage() {
             </div>
 
             <div className="pt-4">
+              <h2 className="text-xs font-black tracking-[0.3em] uppercase mb-4 text-black/40">SELECT CREDIT PROFILE</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApplicantType("banked");
+                    setStepError(null);
+                  }}
+                  className={`text-left p-6 border-[1.5px] transition-all ${
+                    applicantType === "banked"
+                      ? "border-blue-600 bg-blue-50"
+                      : "border-black bg-white"
+                  }`}
+                >
+                  <p className="font-black text-sm uppercase tracking-wide">I have formal credit history (Banked)</p>
+                  <p className="text-xs text-black/60 mt-2 font-bold">Use existing bureau + profile based underwriting.</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApplicantType("unbanked");
+                    setStepError(null);
+                  }}
+                  className={`text-left p-6 border-[1.5px] transition-all ${
+                    applicantType === "unbanked"
+                      ? "border-blue-600 bg-blue-50"
+                      : "border-black bg-white"
+                  }`}
+                >
+                  <p className="font-black text-sm uppercase tracking-wide">I do not have formal credit history (Unbanked)</p>
+                  <p className="text-xs text-black/60 mt-2 font-bold">Get assessed on UPI, utility and alternate cashflow behavior.</p>
+                </button>
+              </div>
               <h2 className="text-xs font-black tracking-[0.3em] uppercase mb-8 text-black/40">SELECT LOAN TYPE</h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {loanOptions.map((option) => (
                   <button
                     key={option.id}
-                    onClick={() => { setLoanType(option.id); nextStep(); }}
+                    onClick={() => {
+                      if (!applicantType) {
+                        setStepError("Select banked or unbanked before loan type");
+                        return;
+                      }
+                      setLoanType(option.id);
+                      nextStep();
+                    }}
                     className="text-left group p-8 md:p-10 flex flex-col gap-5 bg-white border-[1.5px] border-black hover:-translate-y-1 hover:shadow-[6px_6px_0_0_rgba(0,0,0,1)] transition-all duration-300 cursor-pointer"
                   >
                     <div className="flex items-center gap-3">
@@ -820,6 +1094,9 @@ export function ApplyLoanPage() {
                   </button>
                 ))}
               </div>
+              {stepError && (
+                <p className="text-xs font-bold text-red-700 mt-4 uppercase tracking-wide">{stepError}</p>
+              )}
             </div>
           </div>
         )}
@@ -934,20 +1211,451 @@ export function ApplyLoanPage() {
                     <div className="space-y-4 pt-4 border-t border-slate-200">
                       <h3 className="text-sm font-medium text-slate-700">Financial Profile</h3>
 
-                      <div className="space-y-1.5">
-                        <Label className="text-slate-600 text-xs">Annual Income Range <span className="text-red-500">*</span></Label>
-                        <Select value={incomeRange} onValueChange={setIncomeRange}>
-                          <SelectTrigger className="bg-white border-slate-300 text-slate-900 w-full">
-                            <SelectValue placeholder="Select income range" />
-                          </SelectTrigger>
-                          <SelectContent className="bg-white border-slate-300 text-slate-900">
-                            <SelectItem value="<2L">Less than ₹2 Lakhs</SelectItem>
-                            <SelectItem value="2-5L">₹2 - ₹5 Lakhs</SelectItem>
-                            <SelectItem value="5-10L">₹5 - ₹10 Lakhs</SelectItem>
-                            <SelectItem value=">10L">Above ₹10 Lakhs</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      {applicantType !== "unbanked" ? (
+                        <div className="space-y-1.5">
+                          <Label className="text-slate-600 text-xs">Annual Income Range <span className="text-red-500">*</span></Label>
+                          <Select value={incomeRange} onValueChange={setIncomeRange}>
+                            <SelectTrigger className="bg-white border-slate-300 text-slate-900 w-full">
+                              <SelectValue placeholder="Select income range" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-white border-slate-300 text-slate-900">
+                              <SelectItem value="<2L">Less than ₹2 Lakhs</SelectItem>
+                              <SelectItem value="2-5L">₹2 - ₹5 Lakhs</SelectItem>
+                              <SelectItem value="5-10L">₹5 - ₹10 Lakhs</SelectItem>
+                              <SelectItem value=">10L">Above ₹10 Lakhs</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 border border-blue-200 bg-blue-50 p-4">
+                          <Label className="text-slate-700 text-xs font-bold">Alternate underwriting inputs (Unbanked)</Label>
+                          <p className="text-[11px] text-slate-600">Start with only required basics. Add advanced details only if available.</p>
+                          <div className="space-y-3 pt-2 border-t border-blue-100">
+                            <div className="space-y-1.5">
+                              <Label className="text-slate-800 text-xs">
+                                Reference ID (PAN / masked bank reference) <span className="text-red-500">*</span>
+                              </Label>
+                              <Input
+                                placeholder="e.g. AAAAA1111A for demo vault"
+                                value={alternateReferenceId}
+                                onChange={(e) => setAlternateReferenceId(e.target.value.toUpperCase())}
+                                className="bg-white border-slate-300 font-mono text-sm uppercase"
+                              />
+                              <p className="text-[10px] text-slate-600">
+                                Used to match verified payment extracts on the bank side. Self-uploaded CSVs below are optional and marked
+                                unverified until an analyst attaches proof.
+                              </p>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-slate-800 text-xs">Reference type</Label>
+                              <select
+                                value={alternateReferenceIdType}
+                                onChange={(e) =>
+                                  setAlternateReferenceIdType(
+                                    e.target.value as "pan" | "bank_account_masked" | "other"
+                                  )
+                                }
+                                className="border border-black px-3 py-2 text-xs font-bold bg-white w-full max-w-xs"
+                              >
+                                <option value="pan">PAN</option>
+                                <option value="bank_account_masked">Masked bank / account ref</option>
+                                <option value="other">Other</option>
+                              </select>
+                            </div>
+                            <div className="flex flex-wrap gap-4 text-[11px] font-bold text-slate-800">
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={hasUpiHint}
+                                  onChange={(e) => setHasUpiHint(e.target.checked)}
+                                />
+                                Regular UPI / digital payments (hint only)
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={hasUtilityHint}
+                                  onChange={(e) => setHasUtilityHint(e.target.checked)}
+                                />
+                                Regular utility payments (hint only)
+                              </label>
+                            </div>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs font-bold pt-3">
+                            <input type="checkbox" checked={quickApplyUnbanked} onChange={(e) => setQuickApplyUnbanked(e.target.checked)} />
+                            Quick Apply (minimal inputs)
+                          </label>
+                          <p className="text-[10px] font-black uppercase tracking-wide text-amber-900 pt-1">
+                            Optional — self-upload CSV (unverified)
+                          </p>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+                            <select
+                              value={alternateSourceType}
+                              onChange={(e) => {
+                                setAlternateSourceType(e.target.value as "upi" | "utility");
+                                setAlternateIngestionSuccess(false);
+                                setAlternateIngestionMessage(null);
+                              }}
+                              className="border border-black px-3 py-2 text-xs font-bold uppercase tracking-wide bg-white"
+                            >
+                              <option value="upi">UPI / Transaction CSV</option>
+                              <option value="utility">Utility payment CSV</option>
+                            </select>
+                            <input
+                              type="file"
+                              accept=".csv,text/csv"
+                              onChange={(e) => {
+                                setAlternateDataFile(e.target.files?.[0] || null);
+                                setAlternateIngestionSuccess(false);
+                                setAlternateIngestionMessage(null);
+                              }}
+                              className="border border-black px-3 py-2 text-xs font-bold bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAlternateDataUpload}
+                              disabled={alternateIngestionLoading}
+                              className="border border-black px-3 py-2 text-xs font-black uppercase tracking-wide bg-black text-white disabled:opacity-60"
+                            >
+                              {alternateIngestionLoading ? "Ingesting..." : "Ingest Data"}
+                            </button>
+                          </div>
+                          {alternateIngestionMessage && (
+                            <p
+                              className={`text-[11px] font-bold pt-1 ${
+                                alternateIngestionSuccess ? "text-green-800" : "text-amber-900"
+                              }`}
+                            >
+                              {alternateIngestionMessage}
+                            </p>
+                          )}
+
+                          {quickApplyUnbanked ? (
+                            <>
+                              {alternateIngestionSuccess && alternateSourceType === "upi" && (
+                                <div className="mt-3 rounded border border-slate-200 bg-white p-3 text-xs space-y-2">
+                                  <p className="font-black text-slate-800 uppercase tracking-wide text-[10px]">From your CSV (estimated averages)</p>
+                                  <ul className="text-slate-700 space-y-1 font-medium">
+                                    <li>Monthly inflow: ₹{formatInrDisplay(upiMonthlyInflow)}</li>
+                                    {Number(String(upiMonthlyOutflow).replace(/,/g, "")) > 0 && (
+                                      <li>Monthly outflow: ₹{formatInrDisplay(upiMonthlyOutflow)}</li>
+                                    )}
+                                    {avgMonthlyTransactionCount ? (
+                                      <li>Avg transactions / month: {avgMonthlyTransactionCount}</li>
+                                    ) : null}
+                                    {transactionRegularity ? (
+                                      <li>Regularity index: {transactionRegularity}</li>
+                                    ) : null}
+                                    {monthsUpiHistory ? <li>Months of history in file: {monthsUpiHistory}</li> : null}
+                                  </ul>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowIngestedOverride((v) => !v)}
+                                    className="text-[10px] font-black uppercase tracking-wider text-blue-700 underline decoration-dotted"
+                                  >
+                                    {showIngestedOverride ? "Hide manual override" : "Edit ingested figures"}
+                                  </button>
+                                  {showIngestedOverride && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                                      <div className="space-y-1">
+                                        <Label className="text-[10px] text-slate-600">UPI monthly inflow (₹)</Label>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={upiMonthlyInflow}
+                                          onChange={(e) => setUpiMonthlyInflow(e.target.value)}
+                                          className="bg-white text-xs h-8"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-[10px] text-slate-600">UPI monthly outflow (₹)</Label>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={upiMonthlyOutflow}
+                                          onChange={(e) => setUpiMonthlyOutflow(e.target.value)}
+                                          className="bg-white text-xs h-8"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-[10px] text-slate-600">Avg monthly tx count</Label>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={avgMonthlyTransactionCount}
+                                          onChange={(e) => setAvgMonthlyTransactionCount(e.target.value)}
+                                          className="bg-white text-xs h-8"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-[10px] text-slate-600">Txn regularity (0–1)</Label>
+                                        <Input
+                                          value={transactionRegularity}
+                                          onChange={(e) => setTransactionRegularity(e.target.value)}
+                                          className="bg-white text-xs h-8"
+                                        />
+                                      </div>
+                                      <div className="space-y-1 sm:col-span-2">
+                                        <Label className="text-[10px] text-slate-600">Months UPI history</Label>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={monthsUpiHistory}
+                                          onChange={(e) => setMonthsUpiHistory(e.target.value)}
+                                          className="bg-white text-xs h-8"
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {alternateIngestionSuccess && alternateSourceType === "utility" && (
+                                <div className="mt-3 rounded border border-slate-200 bg-white p-3 text-xs space-y-2">
+                                  <p className="font-black text-slate-800 uppercase tracking-wide text-[10px]">From your CSV (utility)</p>
+                                  <ul className="text-slate-700 space-y-1 font-medium">
+                                    <li>Payment regularity: {utilityPaymentRegularity || "—"}</li>
+                                    <li>Months of history in file: {monthsUtilityHistory || "—"}</li>
+                                  </ul>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowIngestedOverride((v) => !v)}
+                                    className="text-[10px] font-black uppercase tracking-wider text-blue-700 underline decoration-dotted"
+                                  >
+                                    {showIngestedOverride ? "Hide manual override" : "Edit ingested figures"}
+                                  </button>
+                                  {showIngestedOverride && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                                      <div className="space-y-1">
+                                        <Label className="text-[10px] text-slate-600">Utility regularity (0–1)</Label>
+                                        <Input
+                                          value={utilityPaymentRegularity}
+                                          onChange={(e) => setUtilityPaymentRegularity(e.target.value)}
+                                          className="bg-white text-xs h-8"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-[10px] text-slate-600">Months utility history</Label>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={monthsUtilityHistory}
+                                          onChange={(e) => setMonthsUtilityHistory(e.target.value)}
+                                          className="bg-white text-xs h-8"
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {!alternateIngestionSuccess && (
+                                <div className="mt-3 space-y-2 rounded border border-amber-200 bg-amber-50/90 p-3">
+                                  <p className="text-[11px] font-bold text-amber-950">
+                                    Upload a CSV above to auto-fill signals, or enter how long you have payment history below (at least one
+                                    field).
+                                  </p>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                      <Label className="text-slate-800 text-xs">Months of UPI / digital payment history</Label>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        placeholder="e.g. 6"
+                                        value={monthsUpiHistory}
+                                        onChange={(e) => setMonthsUpiHistory(e.target.value)}
+                                        className="bg-white border-slate-300 text-slate-900 text-xs"
+                                      />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <Label className="text-slate-800 text-xs">
+                                        Months of utility history <span className="text-slate-500 font-normal">(optional)</span>
+                                      </Label>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        placeholder="e.g. 6"
+                                        value={monthsUtilityHistory}
+                                        onChange={(e) => setMonthsUtilityHistory(e.target.value)}
+                                        className="bg-white border-slate-300 text-slate-900 text-xs"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="space-y-3 pt-3 border-t border-blue-100">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Required and profile</p>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">
+                                    Declared monthly income (₹) <span className="text-red-500">*</span>
+                                  </Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    placeholder="What you earn or declare per month"
+                                    value={declaredMonthlyIncome}
+                                    onChange={(e) => setDeclaredMonthlyIncome(e.target.value)}
+                                    className="bg-white border-slate-300 text-slate-900"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">
+                                    Employment / business type <span className="text-slate-400 font-normal">(optional)</span>
+                                  </Label>
+                                  <Input
+                                    placeholder="e.g. retail, gig, agriculture"
+                                    value={employmentOrBusinessType}
+                                    onChange={(e) => setEmploymentOrBusinessType(e.target.value)}
+                                    className="bg-white border-slate-300 text-slate-900"
+                                  />
+                                </div>
+                                {alternateIngestionSuccess && alternateSourceType === "upi" && (
+                                  <div className="space-y-1.5">
+                                    <Label className="text-slate-700 text-xs">
+                                      Extra utility history (months) <span className="text-slate-400 font-normal">(optional)</span>
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      placeholder="If you also have bill payment history"
+                                      value={monthsUtilityHistory}
+                                      onChange={(e) => setMonthsUtilityHistory(e.target.value)}
+                                      className="bg-white border-slate-300 text-slate-900 text-xs"
+                                    />
+                                  </div>
+                                )}
+                                {alternateIngestionSuccess && alternateSourceType === "utility" && (
+                                  <div className="space-y-1.5">
+                                    <Label className="text-slate-700 text-xs">
+                                      UPI / digital history (months) <span className="text-slate-400 font-normal">(optional)</span>
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      placeholder="If you also have UPI data not in this CSV"
+                                      value={monthsUpiHistory}
+                                      onChange={(e) => setMonthsUpiHistory(e.target.value)}
+                                      className="bg-white border-slate-300 text-slate-900 text-xs"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="space-y-3 pt-2">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">UPI monthly inflow (₹)</Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={upiMonthlyInflow}
+                                    onChange={(e) => setUpiMonthlyInflow(e.target.value)}
+                                    className="bg-white text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">
+                                    UPI monthly outflow (₹) <span className="text-red-500">*</span>
+                                  </Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={upiMonthlyOutflow}
+                                    onChange={(e) => setUpiMonthlyOutflow(e.target.value)}
+                                    className="bg-white text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">
+                                    Avg monthly tx count <span className="text-red-500">*</span>
+                                  </Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={avgMonthlyTransactionCount}
+                                    onChange={(e) => setAvgMonthlyTransactionCount(e.target.value)}
+                                    className="bg-white text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">
+                                    Txn regularity (0–1) <span className="text-red-500">*</span>
+                                  </Label>
+                                  <Input
+                                    value={transactionRegularity}
+                                    onChange={(e) => setTransactionRegularity(e.target.value)}
+                                    className="bg-white text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">
+                                    Declared monthly income (₹) <span className="text-red-500">*</span>
+                                  </Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={declaredMonthlyIncome}
+                                    onChange={(e) => setDeclaredMonthlyIncome(e.target.value)}
+                                    className="bg-white text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">Employment / business type</Label>
+                                  <Input
+                                    value={employmentOrBusinessType}
+                                    onChange={(e) => setEmploymentOrBusinessType(e.target.value)}
+                                    className="bg-white text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">Months UPI history</Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={monthsUpiHistory}
+                                    onChange={(e) => setMonthsUpiHistory(e.target.value)}
+                                    className="bg-white text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-slate-700 text-xs">Months utility history</Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={monthsUtilityHistory}
+                                    onChange={(e) => setMonthsUtilityHistory(e.target.value)}
+                                    className="bg-white text-xs"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setShowAdvancedUnbanked((prev) => !prev)}
+                            className="text-[11px] font-black uppercase tracking-wider text-blue-700 pt-2"
+                          >
+                            {showAdvancedUnbanked ? "Hide advanced details" : "Add advanced details (optional)"}
+                          </button>
+                          {showAdvancedUnbanked && (
+                            <div className="grid grid-cols-2 gap-3 pt-2">
+                              <Input placeholder="UPI inflow variance (0-2)" value={upiInflowVariance} onChange={(e) => setUpiInflowVariance(e.target.value)} />
+                              <Input placeholder="GST consistency 0-1" value={gstConsistency} onChange={(e) => setGstConsistency(e.target.value)} />
+                              <Input placeholder="Utility regularity 0-1" value={utilityPaymentRegularity} onChange={(e) => setUtilityPaymentRegularity(e.target.value)} />
+                              <Input placeholder="Rent consistency 0-1" value={rentPaymentConsistency} onChange={(e) => setRentPaymentConsistency(e.target.value)} />
+                              <Input placeholder="Months GST history" value={monthsGstHistory} onChange={(e) => setMonthsGstHistory(e.target.value)} />
+                              <Input placeholder="Months rent history" value={monthsRentHistory} onChange={(e) => setMonthsRentHistory(e.target.value)} />
+                            </div>
+                          )}
+                          <label className="flex items-center gap-2 text-xs font-bold pt-2">
+                            <input type="checkbox" checked={alternateDataConsent} onChange={(e) => setAlternateDataConsent(e.target.checked)} />
+                            I consent to alternate data usage for underwriting
+                          </label>
+                        </div>
+                      )}
 
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">

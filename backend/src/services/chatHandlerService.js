@@ -83,7 +83,24 @@ export async function processCopilotQuery({ query, applicationId = null }) {
   }
 
   // ── Phase 4: Route the query ──────────────────────────────────────────────
-  const routedQuery = routeQuery(query);
+  let routedQuery = routeQuery(query);
+
+  // If the router fell through to unsupported but the admin already selected an
+  // application and the question is clearly about profile facts, treat as lookup.
+  const q = routedQuery.normalizedQuery || "";
+  const profileFactHints =
+    /\b(income|salary|earn|earning|earnings|revenue|turnover|occupation|employment|job|business owner|business type|self[- ]employ|borrower|applicant type|salaried|msme|farmer)\b/;
+  if (
+    routedQuery.intent === INTENTS.UNSUPPORTED_QUERY &&
+    applicationId &&
+    profileFactHints.test(q)
+  ) {
+    routedQuery = {
+      ...routedQuery,
+      intent: INTENTS.APPLICANT_LOOKUP,
+      confidence: "medium",
+    };
+  }
 
   // Resolve effective applicationId:
   //  1. Explicit override from caller (e.g. UI sends currently-open card ID)

@@ -4,6 +4,24 @@ import {
   sendLoanApprovedEmail,
   sendLoanRejectedEmail,
 } from "../services/emailService.js";
+import {
+  lookupAlternateVault,
+  normalizeReferenceId,
+  listAlternateVaultKeys,
+} from "../data/alternateDataVault.js";
+import {
+  runUnbankedScoringPipeline,
+  applyUnbankedPipelineResultToLoan,
+} from "../services/alternateScoringPipeline.js";
+import {
+  parseCsv,
+  buildUpiSummary,
+  buildUtilitySummary,
+} from "../utils/alternateCsvSummaries.js";
+import {
+  probabilityOfDefaultFromBlendedScore,
+  riskLevelFromBlendedScore,
+} from "../utils/alternateDisplayAlignment.js";
 
 const VALID_RISK_LEVELS = ["low", "medium", "high"];
 const VALID_PRE_SCREEN = ["pass", "review", "reject"];
@@ -500,19 +518,40 @@ export const getLoanExplainabilityForAdmin = async (req, res) => {
 
     const decisionSummary = attachDecisionSummary(loan).decisionSummary;
 
+    let explainPd = loan.features?.probabilityOfDefault ?? null;
+    let explainRisk = loan.aiAnalysis?.riskLevel || null;
+    if (loan.applicantType === "unbanked" && loan.aiAnalysis?.creditScore != null) {
+      const cs = Number(loan.aiAnalysis.creditScore);
+      if (Number.isFinite(cs)) {
+        explainPd = probabilityOfDefaultFromBlendedScore(cs);
+        explainRisk = riskLevelFromBlendedScore(cs);
+      }
+    }
+
     return res.status(200).json({
       loanId: loan._id,
       loanType: loan.loanType,
       status: loan.status,
       explainability: {
         modelVersion: loan.aiAnalysis?.modelVersion || null,
-        probabilityOfDefault: loan.features?.probabilityOfDefault ?? null,
-        riskLevel: loan.aiAnalysis?.riskLevel || null,
+        probabilityOfDefault: explainPd,
+        riskLevel: explainRisk,
         creditScore: loan.aiAnalysis?.creditScore || null,
         explanationSummary:
           loan.aiAnalysis?.shapFactors?.explanationSummary || [],
         flags: loan.aiAnalysis?.amlFlags || [],
         decisionSummary,
+        alternate:
+          loan.applicantType === "unbanked"
+            ? {
+                referenceId: loan.alternateReferenceId || null,
+                scoringMethod: loan.alternateUnderwriting?.scoringMethod || null,
+                adminAttached: loan.alternateUnderwriting?.adminAttached || null,
+                explanationMetadata:
+                  loan.alternateUnderwriting?.explanationMetadata || null,
+                mlShap: loan.alternateUnderwriting?.explanationMetadata?.shap || null,
+              }
+            : null,
       },
       applicant: {
         id: loan.userId?._id || null,
@@ -524,6 +563,136 @@ export const getLoanExplainabilityForAdmin = async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       message: "Error fetching explainability",
+      error: error.message,
+    });
+  }
+};
+
+export const getAlternateVaultKeys = async (req, res) => {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ message: "Admin access only" });
+  }
+  return res.status(200).json({ keys: listAlternateVaultKeys() });
+};
+
+export const attachAlternateVaultData = async (req, res) => {
+  try {
+    const { loanId } = req.params;
+    const admin = await User.findById(req.user._id);
+    if (!admin || admin.role !== "admin") {
+      return res.status(403).json({ message: "Admin access only" });
+    }
+    const loan = await LoanApplication.findById(loanId);
+    if (!loan) {
+      return res.status(404).json({ message: "Loan not found" });
+    }
+    if (admin.adminLoanType && loan.loanType !== admin.adminLoanType) {
+      return res.status(403).json({ message: "Not authorized for this loan type" });
+    }
+    if (loan.applicantType !== "unbanked") {
+      return res.status(400).json({ message: "Only unbanked applications support vault attach" });
+    }
+    const ref = loan.alternateReferenceId || "";
+    const vault = lookupAlternateVault(ref);
+    if (!vault) {
+      return res.status(404).json({
+        message: `No demo vault data for reference ID "${ref}". Demo keys: ${listAlternateVaultKeys().join(", ")}`,
+      });
+    }
+    const adminAttached = {
+      upi: vault.upiSummary,
+      utility: vault.utilitySummary,
+      source: "vault",
+      vaultKey: normalizeReferenceId(ref),
+      qualityTier: vault.qualityTier,
+      attachedAt: new Date(),
+      attachedBy: req.user._id,
+    };
+    const pipe = await runUnbankedScoringPipeline({
+      alternateData: loan.alternateUnderwriting?.alternateData || {},
+      adminAttached,
+      requestedAmount: loan.requestedAmount,
+      requestedTenure: loan.requestedTenure,
+      alternateUserSignals: loan.alternateUserSignals,
+      consentAcknowledged: true,
+    });
+    applyUnbankedPipelineResultToLoan(loan, pipe);
+    await loan.save();
+    return res.status(200).json({
+      message: "Demo vault summaries attached and application rescored",
+      loan: attachDecisionSummary(loan),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Vault attach failed",
+      error: error.message,
+    });
+  }
+};
+
+export const uploadVerifiedAlternateCsv = async (req, res) => {
+  try {
+    const { loanId } = req.params;
+    const admin = await User.findById(req.user._id);
+    if (!admin || admin.role !== "admin") {
+      return res.status(403).json({ message: "Admin access only" });
+    }
+    const loan = await LoanApplication.findById(loanId);
+    if (!loan) {
+      return res.status(404).json({ message: "Loan not found" });
+    }
+    if (admin.adminLoanType && loan.loanType !== admin.adminLoanType) {
+      return res.status(403).json({ message: "Not authorized for this loan type" });
+    }
+    if (loan.applicantType !== "unbanked") {
+      return res.status(400).json({ message: "Only unbanked applications support verified CSV attach" });
+    }
+
+    const files = req.files || {};
+    const upiFile = files.upi?.[0];
+    const utilityFile = files.utility?.[0];
+    let upiSummary = null;
+    let utilitySummary = null;
+    if (upiFile?.buffer) {
+      const rows = parseCsv(upiFile.buffer.toString("utf-8"));
+      if (rows.length) upiSummary = buildUpiSummary(rows);
+    }
+    if (utilityFile?.buffer) {
+      const rows = parseCsv(utilityFile.buffer.toString("utf-8"));
+      if (rows.length) utilitySummary = buildUtilitySummary(rows);
+    }
+    if (!upiSummary && !utilitySummary) {
+      return res.status(400).json({
+        message: "Provide at least one non-empty CSV (field name: upi and/or utility)",
+      });
+    }
+
+    const adminAttached = {
+      upi: upiSummary,
+      utility: utilitySummary,
+      source: "admin_upload",
+      vaultKey: null,
+      qualityTier: "medium",
+      attachedAt: new Date(),
+      attachedBy: req.user._id,
+    };
+    const pipe = await runUnbankedScoringPipeline({
+      alternateData: loan.alternateUnderwriting?.alternateData || {},
+      adminAttached,
+      requestedAmount: loan.requestedAmount,
+      requestedTenure: loan.requestedTenure,
+      alternateUserSignals: loan.alternateUserSignals,
+      consentAcknowledged: true,
+    });
+    applyUnbankedPipelineResultToLoan(loan, pipe);
+    await loan.save();
+    return res.status(200).json({
+      message: "Verified CSV summaries attached and application rescored",
+      loan: attachDecisionSummary(loan),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Verified upload failed",
       error: error.message,
     });
   }

@@ -56,14 +56,30 @@ export function CreditReportPage() {
       .slice()
       .sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime())[0];
 
+    let latestPD = latestLoan?.features?.probabilityOfDefault;
+    let latestRisk = latestLoan?.aiAnalysis?.riskLevel || "N/A";
+    if (
+      latestLoan &&
+      (latestLoan.applicantType === "unbanked" ||
+        latestLoan.features?.underwritingPath === "unbanked")
+    ) {
+      const cs = latestLoan?.aiAnalysis?.creditScore;
+      if (cs != null && Number.isFinite(Number(cs))) {
+        const s = Number(cs);
+        latestPD = Math.max(0.05, Math.min(0.95, 1 - (s - 300) / 550));
+        latestRisk =
+          s >= 700 ? "low" : s >= 590 ? "medium" : "high";
+      }
+    }
+
     return {
       creditScore,
       scoreBand,
       totalLoans: allLoans.length,
       avgRequested,
-      latestRisk: latestLoan?.aiAnalysis?.riskLevel || "N/A",
+      latestRisk,
       latestModelVersion: latestLoan?.aiAnalysis?.modelVersion || "N/A",
-      latestPD: latestLoan?.features?.probabilityOfDefault,
+      latestPD,
     };
   }, [dashboard, allLoans]);
 

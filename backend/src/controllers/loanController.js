@@ -3,6 +3,8 @@ import LoanApplication from "../models/LoanApplication.js";
 import BorrowerProfile from "../models/BorroweProfile.js";
 import { sendLoanSubmittedEmail } from "../services/emailService.js";
 import { predictCreditScoreWithModel } from "../services/mlService.js";
+import { validateAlternateDataPayload } from "../services/alternateUnderwritingEngine.js";
+import { runUnbankedScoringPipeline } from "../services/alternateScoringPipeline.js";
 
 const DEFAULT_EDUCATION = "Secondary / secondary special";
 
@@ -66,6 +68,83 @@ function normalizeRiskLevel(level) {
     return value;
   }
   return "medium";
+}
+
+function normalizeApplicantType(value) {
+  const normalized = String(value || "").toLowerCase();
+  return normalized === "unbanked" ? "unbanked" : "banked";
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function summarizeMlError(error) {
+  const raw = String(error?.message || "ml_inference_error");
+  if (raw.includes("No module named 'shap'")) return "ml_dependency_missing:shap";
+  if (raw.includes("No module named 'xgboost'")) return "ml_dependency_missing:xgboost";
+  if (raw.toLowerCase().includes("timed out")) return "ml_timeout";
+  if (raw.toLowerCase().includes("invalid ml_runner output")) return "ml_invalid_output";
+  return "ml_inference_failed";
+}
+
+function buildUserDecisionExplanation({
+  decision,
+  applicantType,
+  preScreen,
+  alternateUnderwriting,
+}) {
+  const flags = Array.isArray(preScreen?.flags) ? preScreen.flags : [];
+  const reasons = [];
+  const nextSteps = [];
+
+  if (decision?.riskLevel === "high") reasons.push("Risk level is currently high.");
+  if (decision?.probabilityOfDefault >= 0.5) {
+    reasons.push("Estimated default probability is elevated.");
+  }
+  if (flags.includes("loan_to_income_high") || flags.includes("loan_to_income_extreme")) {
+    reasons.push("Requested amount is high relative to current income profile.");
+    nextSteps.push("Apply for a smaller amount or longer tenure to reduce EMI burden.");
+  }
+  if (flags.includes("identity_unverified")) {
+    reasons.push("Identity could not be fully verified.");
+    nextSteps.push("Upload a clear ID document and complete verification.");
+  }
+  if (flags.includes("high_amount_without_collateral")) {
+    reasons.push("High amount requested without collateral support.");
+    nextSteps.push("Add collateral details or reduce requested amount.");
+  }
+
+  if (applicantType === "unbanked" && alternateUnderwriting) {
+    if (alternateUnderwriting.reliabilityFlag === "insufficient_data") {
+      reasons.push("Alternate data is insufficient for a confident decision.");
+      nextSteps.push("Add at least 6 months of UPI or utility payment history.");
+    }
+    if ((alternateUnderwriting.warnings || []).includes("high_cashflow_variance")) {
+      reasons.push("Cashflow pattern appears irregular.");
+      nextSteps.push("Provide stable monthly inflow records and regular payment evidence.");
+    }
+  }
+
+  if (!reasons.length) {
+    reasons.push("Application needs manual verification before final decision.");
+  }
+  if (!nextSteps.length) {
+    nextSteps.push("Keep profile and income details updated, then re-apply.");
+  }
+
+  const isRejected = decision?.decision === "Reject" || decision?.status === "auto_rejected";
+  const title = isRejected ? "Why your loan was not approved" : "Why your loan is under review";
+  const summary = isRejected
+    ? "Your application did not meet current risk checks. You can improve and re-apply."
+    : "Your application is promising but needs a few more checks before final approval.";
+
+  return {
+    title,
+    summary,
+    reasons: reasons.slice(0, 4),
+    nextSteps: nextSteps.slice(0, 4),
+  };
 }
 
 function inferUserCategory({
@@ -534,7 +613,15 @@ export const applyForLoan = async (req, res) => {
       autoDetails,
       businessDetails,
       identityVerified,   // OCR Textract result (additive)
+      applicantType: submittedApplicantType,
+      alternateData,
+      alternateDataConsent,
+      alternateReferenceId,
+      alternateReferenceIdType,
+      alternateUserSignals,
     } = req.body;
+
+    const applicantType = normalizeApplicantType(submittedApplicantType);
 
     // Validate required fields
     if (!loanType || !requestedAmount || !requestedTenure) {
@@ -542,6 +629,31 @@ export const applyForLoan = async (req, res) => {
         message:
           "Missing required fields: loanType, requestedAmount, requestedTenure",
       });
+    }
+
+    if (applicantType === "unbanked" && !alternateDataConsent) {
+      return res.status(400).json({
+        message: "Alternate data consent is required for unbanked assessment",
+      });
+    }
+    if (applicantType === "unbanked") {
+      const refNorm = String(alternateReferenceId || "").trim();
+      if (refNorm.length < 4) {
+        return res.status(400).json({
+          message:
+            "alternateReferenceId is required for unbanked applications (e.g. PAN or masked bank reference, min 4 characters)",
+        });
+      }
+      const alternateValidationErrors = validateAlternateDataPayload(
+        alternateData || {},
+        { referenceId: refNorm }
+      );
+      if (alternateValidationErrors.length) {
+        return res.status(400).json({
+          message: "Invalid alternate underwriting payload",
+          validationWarnings: alternateValidationErrors,
+        });
+      }
     }
 
     // Validate loan type
@@ -628,7 +740,7 @@ export const applyForLoan = async (req, res) => {
       preScreen.manualReviewRequired = true;
     }
 
-    const modelFeatures = transformApplicationToModelFeatures({
+    let modelFeatures = transformApplicationToModelFeatures({
       user,
       borrowerProfile,
       loanType,
@@ -642,49 +754,83 @@ export const applyForLoan = async (req, res) => {
 
     let mlResult;
     let scoringSource = "ml_model";
-    try {
-      mlResult = await predictCreditScoreWithModel(modelFeatures);
-      if (
-        String(mlResult?.modelInfo?.modelType || "").includes(
-          "GuardrailHeuristic"
-        )
-      ) {
-        scoringSource = "guardrail_fallback";
-      }
-    } catch (mlError) {
-      scoringSource = "legacy_fallback";
-      const fallbackRisk =
-        preScreen.preScreenStatus === "reject"
-          ? "high"
-          : preScreen.preScreenStatus === "review"
-            ? "medium"
-            : "low";
-      mlResult = {
-        creditScore:
-          fallbackRisk === "low" ? 720 : fallbackRisk === "medium" ? 610 : 480,
-        riskLevel: fallbackRisk,
-        probability:
-          fallbackRisk === "low"
-            ? 0.22
-            : fallbackRisk === "medium"
-              ? 0.45
-              : 0.78,
-        modelInfo: {
-          modelType: "LegacyFallback",
-          nFeaturesUsed: Object.keys(modelFeatures).length,
-          artifactPath: null,
-        },
-      };
-      preScreen.flags.push(`ml_inference_failed:${mlError.message}`);
-    }
+    let decision;
+    let alternateUnderwriting = null;
+    let unbankedSavedMeta = null;
 
-    const decision = buildDecisionFromLayers({
-      mlResult,
-      preScreen,
-      requestedAmount: normalizedAmount,
-      requestedTenure: normalizedTenure,
-      collateral: safeCollateral,
-    });
+    if (applicantType === "unbanked") {
+      const refKey = String(alternateReferenceId || "").trim().toUpperCase();
+      const idTypeRaw = String(alternateReferenceIdType || "pan").toLowerCase();
+      const idType = ["pan", "bank_account_masked", "other"].includes(idTypeRaw)
+        ? idTypeRaw
+        : "pan";
+      const pipe = await runUnbankedScoringPipeline({
+        alternateData: {
+          ...(alternateData || {}),
+          userSuppliedCsv: Boolean((alternateData || {}).userSuppliedCsv),
+        },
+        adminAttached: null,
+        requestedAmount: normalizedAmount,
+        requestedTenure: normalizedTenure,
+        alternateUserSignals: alternateUserSignals || {},
+        consentAcknowledged: Boolean(alternateDataConsent),
+      });
+      alternateUnderwriting = pipe.alternateUnderwritingDoc;
+      modelFeatures = { ...modelFeatures, ...pipe.modelFeaturesPatch };
+      scoringSource = pipe.scoringSource;
+      decision = pipe.decision;
+      preScreen.flags.push(...pipe.preScreenWarnings);
+      unbankedSavedMeta = {
+        refKey,
+        idType,
+        alternateUserSignals: alternateUserSignals || {},
+      };
+    } else {
+      try {
+        mlResult = await predictCreditScoreWithModel(modelFeatures);
+        if (
+          String(mlResult?.modelInfo?.modelType || "").includes(
+            "GuardrailHeuristic"
+          )
+        ) {
+          scoringSource = "guardrail_fallback";
+        }
+      } catch (mlError) {
+        scoringSource = "legacy_fallback";
+        const fallbackRisk =
+          preScreen.preScreenStatus === "reject"
+            ? "high"
+            : preScreen.preScreenStatus === "review"
+              ? "medium"
+              : "low";
+        mlResult = {
+          creditScore:
+            fallbackRisk === "low" ? 720 : fallbackRisk === "medium" ? 610 : 480,
+          riskLevel: fallbackRisk,
+          // NOTE: this value is repayment probability (not PD). PD is derived as 1 - probability.
+          probability:
+            fallbackRisk === "low"
+              ? 0.82
+              : fallbackRisk === "medium"
+                ? 0.65
+                : 0.22,
+          modelInfo: {
+            modelType: "LegacyFallback",
+            nFeaturesUsed: Object.keys(modelFeatures).length,
+            artifactPath: null,
+          },
+        };
+        preScreen.flags.push(summarizeMlError(mlError));
+      }
+
+      decision = buildDecisionFromLayers({
+        mlResult,
+        preScreen,
+        requestedAmount: normalizedAmount,
+        requestedTenure: normalizedTenure,
+        collateral: safeCollateral,
+      });
+    }
 
     // Create loan application
     const loanData = {
@@ -695,6 +841,7 @@ export const applyForLoan = async (req, res) => {
       purpose: purpose || normalizedEducationDetails?.courseName || "General",
       collateral: safeCollateral,
       status: decision.status,
+      applicantType,
       submittedAt: new Date(),
     };
 
@@ -736,6 +883,17 @@ export const applyForLoan = async (req, res) => {
     if (dateOfBirth) loanData.dateOfBirth = dateOfBirth;
     if (age) loanData.age = Number(age);
 
+    if (applicantType === "unbanked" && unbankedSavedMeta) {
+      loanData.alternateReferenceId = unbankedSavedMeta.refKey;
+      loanData.alternateReferenceIdType = unbankedSavedMeta.idType;
+      loanData.alternateUserSignals = {
+        hasUpiHint: Boolean(unbankedSavedMeta.alternateUserSignals?.hasUpiHint),
+        hasUtilityHint: Boolean(
+          unbankedSavedMeta.alternateUserSignals?.hasUtilityHint
+        ),
+      };
+    }
+
     // Layered AI + policy decision (non-breaking keys preserved for frontend).
     loanData.aiAnalysis = {
       creditScore: decision.creditScore,
@@ -745,11 +903,25 @@ export const applyForLoan = async (req, res) => {
       suggestedTenure: decision.suggestedTenure,
       amlFlags: preScreen.flags,
       shapFactors: {
-        explanationSummary: [
-          decision.decisionReason,
-          `scoringSource=${scoringSource}`,
-          `borrowerType=${borrowerProfile?.borrowerType || modelFeatures?.userCategory || "unknown"}`,
-        ],
+        explanationSummary: (() => {
+          const base = [
+            decision.decisionReason,
+            `scoringSource=${scoringSource}`,
+            `borrowerType=${borrowerProfile?.borrowerType || modelFeatures?.userCategory || "unknown"}`,
+          ];
+          if (
+            applicantType === "unbanked" &&
+            alternateUnderwriting?.explanationMetadata?.shap?.topFeatures?.length
+          ) {
+            base.push("alternate_model_shap_top:");
+            alternateUnderwriting.explanationMetadata.shap.topFeatures
+              .slice(0, 8)
+              .forEach((t) => {
+                base.push(`  ${t.name} (shap=${t.shapValue})`);
+              });
+          }
+          return base;
+        })(),
       },
       modelVersion: "winner_upgrade_v5",
     };
@@ -765,7 +937,27 @@ export const applyForLoan = async (req, res) => {
       decision: decision.decision,
       decisionReason: decision.decisionReason,
       borrowerType: borrowerProfile?.borrowerType || null,
+      underwritingPath: applicantType,
+      alternateWarnings: alternateUnderwriting?.warnings || [],
+      alternateConfidence: alternateUnderwriting?.confidenceLevel || null,
+      alternateReliabilityFlag: alternateUnderwriting?.reliabilityFlag || null,
+      userDecisionExplanation: buildUserDecisionExplanation({
+        decision,
+        applicantType,
+        preScreen,
+        alternateUnderwriting,
+      }),
     };
+
+    if (alternateUnderwriting) {
+      loanData.alternateUnderwriting = {
+        ...alternateUnderwriting,
+        explanationMetadata: {
+          ...(alternateUnderwriting.explanationMetadata || {}),
+          preScreenStatus: preScreen.preScreenStatus,
+        },
+      };
+    }
 
     const loan = new LoanApplication(loanData);
     console.log("📝 Loan object created, attempting to save...");
@@ -834,6 +1026,11 @@ export const applyForLoan = async (req, res) => {
         status: savedLoan.status,
       },
       decisionOutput: {
+        applicant_type: applicantType,
+        underwriting_path:
+          applicantType === "unbanked" ? "alternate" : "banked_model",
+        normalized_features_summary:
+          alternateUnderwriting?.normalizedFeaturesSummary || null,
         credit_score: decision.creditScore,
         probability_of_default: decision.probabilityOfDefault,
         risk_band: decision.riskLevel,
@@ -842,6 +1039,17 @@ export const applyForLoan = async (req, res) => {
         decision: decision.decision,
         decision_reason: decision.decisionReason,
         flags: preScreen.flags,
+        confidence: alternateUnderwriting?.confidenceLevel || "high",
+        reliability_flag: alternateUnderwriting?.reliabilityFlag || "sufficient_data",
+        missing_inputs: alternateUnderwriting?.warnings || [],
+        explanation: alternateUnderwriting
+          ? {
+            reasons: alternateUnderwriting.reasons,
+            warnings: alternateUnderwriting.warnings,
+            trust_score: alternateUnderwriting.trustScore,
+            fraud_risk_score: alternateUnderwriting.fraudRiskScore,
+          }
+          : null,
       },
     });
   } catch (error) {

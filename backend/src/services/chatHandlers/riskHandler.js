@@ -13,6 +13,16 @@
 import { getApplicantCardByApplicationId } from "../applicantFetchService.js";
 import { askGroundedCopilot }              from "../ollamaService.js";
 
+function fmtPct(v) {
+  if (v === null || v === undefined) return "N/A";
+  return `${(v * 100).toFixed(1)}%`;
+}
+
+function fmtInr(v) {
+  if (v === null || v === undefined) return "N/A";
+  return `₹${Number(v).toLocaleString("en-IN")}`;
+}
+
 // ── Context builder ───────────────────────────────────────────────────────────
 
 /**
@@ -92,6 +102,40 @@ function buildRiskContext(card) {
   return lines.join("\n");
 }
 
+function buildStructuredRiskAnswer(card, aiSummary = "") {
+  const lines = [
+    "## Risk Snapshot",
+    `- Applicant: ${card.applicantName || "N/A"}`,
+    `- Application: ${card.applicationId || "N/A"}`,
+    `- Loan Type: ${card.loanType || "N/A"}`,
+    `- Requested Amount: ${fmtInr(card.requestedAmount)}`,
+    `- Eligible Amount: ${fmtInr(card.eligibleAmount)}`,
+    "",
+    "## Decision Signals",
+    `- Decision: ${card.decision || "N/A"}`,
+    `- Status: ${card.status || "N/A"}`,
+    `- Risk Level: ${card.riskLevel || "N/A"}`,
+    `- Credit Score: ${card.creditScore ?? "N/A"}`,
+    `- Probability of Default: ${fmtPct(card.probabilityOfDefault)}`,
+    `- Pre-screen: ${card.preScreenStatus || "N/A"}`,
+    "",
+    "## Key Concerns",
+    ...(card.topNegativeFactors?.length
+      ? card.topNegativeFactors.slice(0, 4).map((x) => `- ${x}`)
+      : ["- No major negative factors recorded"]),
+    "",
+    "## Mitigating Factors",
+    ...(card.topPositiveFactors?.length
+      ? card.topPositiveFactors.slice(0, 4).map((x) => `- ${x}`)
+      : ["- No major positive factors recorded"]),
+  ];
+
+  if (aiSummary && aiSummary.trim()) {
+    lines.push("", "## AI Summary", aiSummary.trim());
+  }
+  return lines.join("\n");
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 /**
@@ -138,46 +182,20 @@ export async function riskHandler(applicationId, routedQuery) {
   const context = buildRiskContext(card);
   const question = routedQuery?.normalizedQuery || "Explain the risk assessment and decision for this application.";
 
-  let answer;
+  let aiSummary = "";
   try {
-    answer = await askGroundedCopilot({ question, context, intent: "risk_explanation" });
+    aiSummary = await askGroundedCopilot({
+      question:
+        `${question}\n\nRespond in max 6 lines. Include: core risk reason, approval/review recommendation, and one caution.`,
+      context,
+      intent: "risk_explanation",
+    });
   } catch (err) {
-    if (err.isOllamaUnavailable) {
-      // Graceful fallback: return a short plain-English summary without LLM prose
-      const parts = [];
-
-      const riskLevel = card.riskLevel ?? "not recorded";
-      const decision = card.decision ?? "not recorded";
-      const pd =
-        card.probabilityOfDefault != null
-          ? `${(card.probabilityOfDefault * 100).toFixed(1)}%`
-          : "not available";
-      const preScreen = card.preScreenStatus ?? "not recorded";
-
-      parts.push(
-        `This application has a risk level of ${riskLevel} and the decision is "${decision}". ` +
-          `The model-estimated probability of default is ${pd}, and the pre-screen status is ${preScreen}.`
-      );
-
-      if (card.topNegativeFactors?.length) {
-        parts.push(
-          `Key concerns include: ${card.topNegativeFactors.join("; ")}.`
-        );
-      }
-
-      if (card.decisionReason) {
-        parts.push(`Decision reason: ${card.decisionReason}.`);
-      }
-
-      parts.push(
-        "Detailed AI reasoning is not available right now because the analysis engine (Ollama) is not reachable."
-      );
-
-      answer = parts.join(" ");
-    } else {
-      answer = `Risk analysis unavailable: ${err.message}`;
-    }
+    aiSummary = err.isOllamaUnavailable
+      ? "[AI narrative unavailable - Ollama not reachable]"
+      : `[AI narrative unavailable - ${err.message}]`;
   }
+  const answer = buildStructuredRiskAnswer(card, aiSummary);
 
   return {
     intent: "risk_explanation",

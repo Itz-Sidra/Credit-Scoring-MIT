@@ -31,6 +31,15 @@ function fmtPct(v) {
   return `${(v * 100).toFixed(1)}%`;
 }
 
+function numOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
 const OBJECT_ID_RE = /^[a-f0-9]{24}$/i;
 const LOAN_CODE_RE = /^[a-z]\d{1,8}$/i;
 
@@ -97,6 +106,146 @@ function buildComparisonContext(cardA, cardB) {
   lines.push(`A — Strengths: ${cardA.topPositiveFactors?.join("; ") || "none"}`);
   lines.push(`B — Strengths: ${cardB.topPositiveFactors?.join("; ") || "none"}`);
 
+  return lines.join("\n");
+}
+
+function computePriorityScore(card) {
+  const credit = clamp((numOrNull(card?.creditScore) ?? 600) / 850, 0, 1);
+  const pd = clamp(numOrNull(card?.probabilityOfDefault) ?? 0.45, 0, 1);
+  const completeness = clamp(
+    numOrNull(card?.alternateUnderwriting?.dataCompletenessScore) ?? 0.6,
+    0,
+    1
+  );
+  const fraud = clamp(
+    numOrNull(card?.alternateUnderwriting?.explanationMetadata?.fraudRiskScore) ??
+      0.25,
+    0,
+    1
+  );
+  const manualPenalty = card?.manualReviewRequired ? 0.06 : 0;
+  const requestedAmount = numOrNull(card?.requestedAmount) ?? 0;
+  const monthlyIncome =
+    numOrNull(card?.monthlyIncome) ??
+    numOrNull(card?.householdMonthlyIncome) ??
+    0;
+  const affordabilityPenalty =
+    monthlyIncome > 0
+      ? clamp(requestedAmount / Math.max(1, monthlyIncome * 24), 0, 1) * 0.12
+      : clamp(requestedAmount / 500000, 0, 1) * 0.08;
+  const score = clamp(
+    credit * 0.45 + (1 - pd) * 0.35 + completeness * 0.15 - fraud * 0.2 - manualPenalty,
+    0,
+    1
+  );
+  return Number(((score - affordabilityPenalty) * 100).toFixed(1));
+}
+
+function choosePrimaryConcern(card) {
+  if (!Array.isArray(card?.topNegativeFactors) || !card.topNegativeFactors.length) {
+    return null;
+  }
+  const nonMl = card.topNegativeFactors.find(
+    (item) =>
+      !String(item).includes("ml_inference_failed") &&
+      !String(item).includes("Model fallback used")
+  );
+  return nonMl || card.topNegativeFactors[0];
+}
+
+function computeTieBreaker(cardA, cardB) {
+  const aReq = numOrNull(cardA?.requestedAmount) ?? 0;
+  const bReq = numOrNull(cardB?.requestedAmount) ?? 0;
+  if (aReq !== bReq) return aReq < bReq ? "A" : "B";
+  const aPd = numOrNull(cardA?.probabilityOfDefault) ?? 0.5;
+  const bPd = numOrNull(cardB?.probabilityOfDefault) ?? 0.5;
+  if (aPd !== bPd) return aPd < bPd ? "A" : "B";
+  return "A";
+}
+
+function sanitizePriority(v) {
+  if (!Number.isFinite(v)) return 0;
+  return Number(Math.max(0, v).toFixed(1));
+}
+
+function computePriorityOrder(cardA, cardB) {
+  const prA = sanitizePriority(computePriorityScore(cardA));
+  const prB = sanitizePriority(computePriorityScore(cardB));
+  if (prA === prB) {
+    const winner = computeTieBreaker(cardA, cardB);
+    return {
+      prA,
+      prB,
+      first: winner,
+      second: winner === "A" ? "B" : "A",
+      tieBreakUsed: true,
+    };
+  }
+  return {
+    prA,
+    prB,
+    first: prA > prB ? "A" : "B",
+    second: prA > prB ? "B" : "A",
+    tieBreakUsed: false,
+  };
+}
+
+function makeReasons(card, label) {
+  const reasons = [];
+  if (card?.riskLevel) reasons.push(`${label}: risk=${card.riskLevel}`);
+  if (card?.probabilityOfDefault != null) {
+    reasons.push(`${label}: PD=${fmtPct(card.probabilityOfDefault)}`);
+  }
+  const fraud = card?.alternateUnderwriting?.explanationMetadata?.fraudRiskScore;
+  if (fraud != null) reasons.push(`${label}: fraud=${Math.round(fraud * 100)}%`);
+  const complete = card?.alternateUnderwriting?.dataCompletenessScore;
+  if (complete != null) reasons.push(`${label}: completeness=${Math.round(complete * 100)}%`);
+  const concern = choosePrimaryConcern(card);
+  if (concern) {
+    reasons.push(`${label}: concern=${concern}`);
+  }
+  const requested = numOrNull(card?.requestedAmount);
+  if (requested != null) {
+    reasons.push(`${label}: requested=${fmtNum(requested, "₹")}`);
+  }
+  return reasons;
+}
+
+function buildStructuredComparisonAnswer(cardA, cardB, aiNarrative = null) {
+  const order = computePriorityOrder(cardA, cardB);
+  const prA = order.prA;
+  const prB = order.prB;
+  const first = order.first;
+  const second = order.second;
+
+  const reasons = [
+    ...makeReasons(cardA, "A"),
+    ...makeReasons(cardB, "B"),
+  ].slice(0, 8);
+
+  const lines = [
+    "## Priority Decision",
+    `1) ${first} (higher priority)`,
+    `2) ${second}`,
+    ...(order.tieBreakUsed
+      ? ["- Tie-break used: lower requested amount preferred under equal risk profile"]
+      : []),
+    "",
+    "## Side-by-Side Metrics",
+    `- A: ${cardA.applicantName || "N/A"} | Req=${fmtNum(cardA.requestedAmount, "₹")} | Score=${cardA.creditScore ?? "N/A"} | Risk=${cardA.riskLevel ?? "N/A"} | PD=${fmtPct(cardA.probabilityOfDefault)} | Priority=${prA}`,
+    `- B: ${cardB.applicantName || "N/A"} | Req=${fmtNum(cardB.requestedAmount, "₹")} | Score=${cardB.creditScore ?? "N/A"} | Risk=${cardB.riskLevel ?? "N/A"} | PD=${fmtPct(cardB.probabilityOfDefault)} | Priority=${prB}`,
+    "",
+    "## Why",
+    ...reasons.map((r) => `- ${r}`),
+    "",
+    "## Recommendation",
+    `- A: ${cardA.decision || "review"}`,
+    `- B: ${cardB.decision || "review"}`,
+  ];
+
+  if (aiNarrative && aiNarrative.trim()) {
+    lines.push("", "## AI Summary", aiNarrative.trim());
+  }
   return lines.join("\n");
 }
 
@@ -193,17 +342,24 @@ export async function comparisonHandler(applicationId, routedQuery) {
     routedQuery?.normalizedQuery ||
     "Provide a clear, factual comparison of these two applications. Highlight the key differences in risk, income, verification, and the likely reasons for their respective decisions.";
 
-  let answer;
+  let aiNarrative = "";
   try {
-    answer = await askGroundedCopilot({ question, context, intent: "comparison" });
+    aiNarrative = await askGroundedCopilot({
+      question:
+        `${question}\n\nRespond in max 8 lines. Focus only on: priority winner, top 3 reasons, and final recommendation for A and B.`,
+      context,
+      intent: "comparison",
+    });
   } catch (err) {
-    // Graceful fallback: return the structured comparison table
+    // Graceful fallback: keep deterministic summary without blocking user.
     if (err.isOllamaUnavailable) {
-      answer = context + "\n\n[AI narrative summary unavailable — Ollama is not reachable]";
+      aiNarrative = "[AI narrative unavailable — Ollama not reachable]";
     } else {
-      answer = `Comparison analysis unavailable: ${err.message}\n\n` + context;
+      aiNarrative = `[AI narrative unavailable — ${err.message}]`;
     }
   }
+
+  const answer = buildStructuredComparisonAnswer(cardA, cardB, aiNarrative);
 
   return {
     intent: "comparison",

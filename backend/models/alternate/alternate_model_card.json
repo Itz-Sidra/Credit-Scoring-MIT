@@ -1,0 +1,24 @@
+{
+  "artifact": "C:\\Users\\PRIYANSH JAIN\\OneDrive\\Desktop\\shlok_barclays\\Barclays-Final\\backend\\models\\alternate\\alternate_risk_pipeline.pkl",
+  "n_samples": 6000,
+  "features": [
+    "cashflow_stability",
+    "payment_discipline",
+    "capacity_score",
+    "completeness_score",
+    "history_months_norm",
+    "has_upi",
+    "has_utility",
+    "has_admin_upi",
+    "has_admin_utility",
+    "quality_tier",
+    "loan_to_income_ratio",
+    "fraud_risk",
+    "trust_score",
+    "declared_gap",
+    "hint_upi",
+    "hint_utility"
+  ],
+  "label": "synthetic_default_risk_unbanked",
+  "note": "Demo only \u2014 not for production credit decisions."
+}

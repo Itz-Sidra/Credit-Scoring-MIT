@@ -21,6 +21,10 @@
 
 import { deriveFactors }   from "./applicantFactorService.js";
 import { generateSummary } from "./applicantSummaryService.js";
+import {
+  probabilityOfDefaultFromBlendedScore,
+  riskLevelFromBlendedScore,
+} from "../utils/alternateDisplayAlignment.js";
 
 // ─── Safe field extractors ────────────────────────────────────────────────────
 const safeNum  = (v) => (typeof v === "number" && !isNaN(v) ? v : null);
@@ -46,6 +50,9 @@ export function buildApplicantCard(loanDoc, userDoc = null) {
   const mf         = feat.modelFeatures   || {};
   const ap         = feat.applicantProfile || {};
   const collateral = loan.collateral  || {};
+  const altUw = loan.alternateUnderwriting || {};
+  const altData = altUw.alternateData || {};
+  const declaredAlt = altData.declaredIncome || {};
 
   // ── Identity ─────────────────────────────────────────────────────────────
   const applicationId  = String(loan._id || "");
@@ -78,11 +85,11 @@ export function buildApplicantCard(loanDoc, userDoc = null) {
     0;
 
   // ── AI Analysis outputs ───────────────────────────────────────────────────
-  const creditScore          = safeNum(ai.creditScore) ?? safeNum(resolvedUser?.creditScore) ?? null;
+  let creditScore          = safeNum(ai.creditScore) ?? safeNum(resolvedUser?.creditScore) ?? null;
   const eligibleAmount       = safeNum(ai.eligibleAmount);
   const suggestedInterestRate = safeNum(ai.suggestedInterestRate);
   const suggestedTenure      = safeNum(ai.suggestedTenure);
-  const riskLevel            = safeStr(ai.riskLevel)  || "medium";
+  let riskLevel            = safeStr(ai.riskLevel)  || "medium";
   const amlFlags             = Array.isArray(ai.amlFlags) ? [...ai.amlFlags] : [];
   const modelVersion         = safeStr(ai.modelVersion);
   // SHAP explanation summary (array of strings, if present)
@@ -92,7 +99,14 @@ export function buildApplicantCard(loanDoc, userDoc = null) {
 
   // ── Decision fields ───────────────────────────────────────────────────────
   const scoringSource        = safeStr(feat.scoringSource);
-  const probabilityOfDefault = safeNum(feat.probabilityOfDefault);
+  let probabilityOfDefault = safeNum(feat.probabilityOfDefault);
+
+  if (loan.applicantType === "unbanked" && safeNum(ai.creditScore) != null) {
+    const headScore = safeNum(ai.creditScore);
+    creditScore = headScore;
+    probabilityOfDefault = probabilityOfDefaultFromBlendedScore(headScore);
+    riskLevel = riskLevelFromBlendedScore(headScore);
+  }
   const preScreenStatus      = safeStr(feat.preScreenStatus);
   const manualReviewRequired = safeBool(feat.manualReviewRequired) ?? false;
   const decision             = safeStr(feat.decision);
@@ -107,7 +121,12 @@ export function buildApplicantCard(loanDoc, userDoc = null) {
   const incomeType           = safeStr(mf.incomeType)  || safeStr(ap.incomeType);
 
   // Income — pick most specific available source
-  const monthlyIncome        = safeNum(mf.monthlyIncome) ?? safeNum(mf.monthlySalaryNet);
+  const monthlyIncome        =
+    safeNum(mf.monthlyIncome) ??
+    safeNum(mf.monthlySalaryNet) ??
+    (loan.applicantType === "unbanked"
+      ? safeNum(declaredAlt.monthlyIncome ?? declaredAlt.monthlyTurnover)
+      : null);
   const annualIncomeEstimate = safeNum(mf.annualIncomeEstimate) ?? safeNum(mf.farmerAnnualIncome);
   const householdMonthlyIncome = safeNum(mf.householdMonthlyIncome);
   const monthlyRevenue       = safeNum(mf.monthlyRevenue);
