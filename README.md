@@ -50,6 +50,8 @@ Converts ML output into decisions:
 If ML fails → fallback to Manual Review  |  Suspicious data → Force review
 
 ### 5. Decision + Explainability
+- Stores a structured AI analysis with decision recommendation, key risk factors, risk band, and SHAP-based explanations for admin visibility.
+
 ### 6. Admin Review (Human-in-the-Loop)
 ### 7. Copilot / Analysis Chat
 
