@@ -41,7 +41,14 @@ Transforms raw fields into model-ready features and calls the Python ML service 
 - Risk score / Probability of Default (PD)
 - Risk band classification
 - Approve / Review / Reject signals
+
 ### 4. Policy Guardrails
+Converts ML output into decisions:
+- <0.3 approved
+- 0.3 to 0.7 Manual Review
+- >0.7 Reject
+If ML fails → fallback to Manual Review  |  Suspicious data → Force review
+
 ### 5. Decision + Explainability
 ### 6. Admin Review (Human-in-the-Loop)
 ### 7. Copilot / Analysis Chat
