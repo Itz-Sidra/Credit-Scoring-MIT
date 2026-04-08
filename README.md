@@ -78,6 +78,12 @@ Governance & Monitoring Layer  (Model Risk, Bias Monitoring, AUC Tracking)
 - OCR & Infra: AWS Textract, Docker Compose
 - AI/ML: Python, scikit-learn, XGBoost, SHAP, Ollama (Qwen), Linear Regression
 
+
+## User Flows
+- Borrower Flow
+    - OTP Login → Segment Profile → Loan Application (amount, income, tenure, liabilities) → Document Upload + OCR → Application Submitted
+- Admin Flow
+    - Dashboard Monitoring → Loan Review Queue → AI Explainability View → Approve / Reject / Request More Info → Analysis Chat
 ## One-Command Start (Recommended)
 
 From workspace root:
