@@ -14,6 +14,7 @@ Over 1.4 billion people globally lack formal credit history. This leads to:
 - MSMEs and gig workers being rejected for loans
 - Lenders struggling to balance financial inclusion with portfolio risk
 - Widespread financial exclusion and missed economic growth
+Traditional credit scoring systems fail those who are unbanked or underbanked — not because they're risky, but because they're invisible to the system.
 
 ## One-Command Start (Recommended)
 
