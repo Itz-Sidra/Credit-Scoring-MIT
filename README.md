@@ -74,7 +74,9 @@ Governance & Monitoring Layer  (Model Risk, Bias Monitoring, AUC Tracking)
 ## Tech Stack
 - Frontend: React, TypeScript, Vite, MUI, Radix
 - Backend: Node.js, Express, JWT Auth, Role Middleware
-- Database: MongoDB (Mongoose), Redis (ioredis)OCR & InfraAWS Textract, Docker ComposeAI/MLPython, scikit-learn, XGBoost, SHAP, Ollama (Qwen), Linear Regression
+- Database: MongoDB (Mongoose), Redis (ioredis)
+- OCR & Infra: AWS Textract, Docker Compose
+- AI/ML: Python, scikit-learn, XGBoost, SHAP, Ollama (Qwen), Linear Regression
 
 ## One-Command Start (Recommended)
 
