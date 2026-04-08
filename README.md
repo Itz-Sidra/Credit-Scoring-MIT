@@ -84,6 +84,14 @@ Governance & Monitoring Layer  (Model Risk, Bias Monitoring, AUC Tracking)
     - OTP Login → Segment Profile → Loan Application (amount, income, tenure, liabilities) → Document Upload + OCR → Application Submitted
 - Admin Flow
     - Dashboard Monitoring → Loan Review Queue → AI Explainability View → Approve / Reject / Request More Info → Analysis Chat
+
+## Dataset used:
+- Home Credit Default Risk (Kaggle): Primary loan default prediction modeling
+- Lending Club Loan Data (Kaggle): Real-world loan performance & repayment behavior
+- German Credit Dataset (UCI ML Repo): Benchmark for credit risk classification
+- Give Me Some Credit (Kaggle): Financial distress prediction analysis
+- Training Data (Synthetic): Augmenting unbanked segment coverage
+
 ## One-Command Start (Recommended)
 
 From workspace root:
