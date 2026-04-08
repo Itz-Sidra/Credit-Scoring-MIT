@@ -27,6 +27,7 @@ What makes us different:
 ## How It Works (Algorithm Pipeline):
 Input Data → Rule Checks → ML Scoring → Policy Guardrails → Recommendation → Human Approval → Final Outcome
 ### 1. Data Ingestion
+- Collects OTP-verified identity, segment profile (Salaried / MSME / Farmer / Student), loan request details, income, liabilities, and OCR-verified documents via AWS Textract.
 ### 2. Pre-Screen (Rule-Based Gate)
 ### 3. Feature Engineering + ML Inference
 ### 4. Policy Guardrails
