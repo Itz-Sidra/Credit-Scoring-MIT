@@ -26,6 +26,13 @@ What makes us different:
 
 ## How It Works (Algorithm Pipeline):
 Input Data → Rule Checks → ML Scoring → Policy Guardrails → Recommendation → Human Approval → Final Outcome
+### 1. Data Ingestion
+### 2. Pre-Screen (Rule-Based Gate)
+### 3. Feature Engineering + ML Inference
+### 4. Policy Guardrails
+### 5. Decision + Explainability
+### 6. Admin Review (Human-in-the-Loop)
+### 7. Copilot / Analysis Chat
 
 ## One-Command Start (Recommended)
 
