@@ -53,6 +53,8 @@ If ML fails → fallback to Manual Review  |  Suspicious data → Force review
 - Stores a structured AI analysis with decision recommendation, key risk factors, risk band, and SHAP-based explanations for admin visibility.
 
 ### 6. Admin Review (Human-in-the-Loop)
+- Admins can inspect applications with full AI context, approve/reject with notes, and maintain audit trails. Final authority always rests with a human.
+
 ### 7. Copilot / Analysis Chat
 
 ## One-Command Start (Recommended)
