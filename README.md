@@ -29,6 +29,10 @@ Input Data → Rule Checks → ML Scoring → Policy Guardrails → Recommendati
 ### 1. Data Ingestion
 - Collects OTP-verified identity, segment profile (Salaried / MSME / Farmer / Student), loan request details, income, liabilities, and OCR-verified documents via AWS Textract.
 ### 2. Pre-Screen (Rule-Based Gate)
+Fast eligibility checks before AI scoring:
+- Is income present?
+- Is loan amount entered?
+- Is tenure selected?
 ### 3. Feature Engineering + ML Inference
 ### 4. Policy Guardrails
 ### 5. Decision + Explainability
