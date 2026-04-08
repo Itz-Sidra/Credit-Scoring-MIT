@@ -28,13 +28,19 @@ What makes us different:
 Input Data → Rule Checks → ML Scoring → Policy Guardrails → Recommendation → Human Approval → Final Outcome
 ### 1. Data Ingestion
 - Collects OTP-verified identity, segment profile (Salaried / MSME / Farmer / Student), loan request details, income, liabilities, and OCR-verified documents via AWS Textract.
+
 ### 2. Pre-Screen (Rule-Based Gate)
 Fast eligibility checks before AI scoring:
 - Is income present?
 - Is loan amount entered?
 - Is tenure selected?
 Fails → Immediate Reject.    |   Passes → moves to ML scoring.
+
 ### 3. Feature Engineering + ML Inference
+Transforms raw fields into model-ready features and calls the Python ML service to produce:
+- Risk score / Probability of Default (PD)
+- Risk band classification
+- Approve / Review / Reject signals
 ### 4. Policy Guardrails
 ### 5. Decision + Explainability
 ### 6. Admin Review (Human-in-the-Loop)
