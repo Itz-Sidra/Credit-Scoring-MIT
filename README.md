@@ -24,6 +24,9 @@ What makes us different:
 - Explainable AI (SHAP insights)
 - Continuous self-learning system
 
+## How It Works (Algorithm Pipeline):
+Input Data → Rule Checks → ML Scoring → Policy Guardrails → Recommendation → Human Approval → Final Outcome
+
 ## One-Command Start (Recommended)
 
 From workspace root:
