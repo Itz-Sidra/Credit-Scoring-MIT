@@ -33,6 +33,7 @@ Fast eligibility checks before AI scoring:
 - Is income present?
 - Is loan amount entered?
 - Is tenure selected?
+Fails → Immediate Reject.    |   Passes → moves to ML scoring.
 ### 3. Feature Engineering + ML Inference
 ### 4. Policy Guardrails
 ### 5. Decision + Explainability
