@@ -58,6 +58,19 @@ If ML fails → fallback to Manual Review  |  Suspicious data → Force review
 ### 7. Copilot / Analysis Chat
 - LLM-powered assistant (Ollama/Qwen) lets admins ask natural language questions like "Why is this applicant high risk?" or "Compare loan A vs loan B."
 
+## System Architecture
+Retail/MSME Applicant
+       ↓
+Secure Data Aggregation Layer  (UPI, Utility, GST data + validation)
+       ↓
+AI Risk Engine
+  ├── Credit Risk Model  (Probability of Default, Risk Classification)
+  └── Explainability & Fairness Module  (SHAP, Advance Fairness, Regulatory Mapping)
+       ↓
+Decision Engine  (Fraud Score + Risk Score + Fairness Status → Approve / Reject / Review)
+       ↓
+Governance & Monitoring Layer  (Model Risk, Bias Monitoring, AUC Tracking)
+
 ## One-Command Start (Recommended)
 
 From workspace root:
