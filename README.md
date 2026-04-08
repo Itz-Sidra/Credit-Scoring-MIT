@@ -9,6 +9,12 @@ This workspace is organized for clean full-stack development with separate front
 - docs: deployment checklist and API collection for demo/testing
 - scripts: root orchestration scripts
 
+## Problem Statement
+Over 1.4 billion people globally lack formal credit history. This leads to:
+- MSMEs and gig workers being rejected for loans
+- Lenders struggling to balance financial inclusion with portfolio risk
+- Widespread financial exclusion and missed economic growth
+
 ## One-Command Start (Recommended)
 
 From workspace root:
