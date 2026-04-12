@@ -34,48 +34,62 @@ function fmtAmount(v) {
 function buildSummaryText(card) {
   const lines = [];
 
-  lines.push(`Application ID: ${card.applicationId}`);
-  lines.push(`Applicant: ${card.applicantName}`);
-  lines.push(`Loan Type: ${fmt(card.loanType)} | Purpose: ${fmt(card.purpose)}`);
+  lines.push(`### Applicant Summary: **${card.applicantName}**`);
+  lines.push(`**Application ID:** \`${card.applicationId}\`  `);
+  lines.push(`**Loan Type:** ${fmt(card.loanType)} | **Purpose:** ${fmt(card.purpose)}  `);
   lines.push(
-    `Requested: ${fmtAmount(card.requestedAmount)} over ${fmt(card.requestedTenure, " months")}`
+    `**Requested:** ${fmtAmount(card.requestedAmount)} over ${fmt(card.requestedTenure, " months")}  `
   );
-  lines.push(`Status: ${fmt(card.status)}`);
+  lines.push(`**Status:** ${fmt(card.status)}  `);
   lines.push("");
 
-  lines.push("── Decision ──");
-  lines.push(`Decision: ${fmt(card.decision)}`);
-  lines.push(`Risk Level: ${fmt(card.riskLevel)}`);
-  lines.push(`Probability of Default: ${card.probabilityOfDefault != null ? (card.probabilityOfDefault * 100).toFixed(1) + "%" : "not available"}`);
-  lines.push(`Pre-Screen Status: ${fmt(card.preScreenStatus)}`);
-  lines.push(`Eligible Amount: ${fmtAmount(card.eligibleAmount)}`);
-  if (card.decisionReason) lines.push(`Decision Reason: ${card.decisionReason}`);
+  lines.push("### Decision & Risk");
+  lines.push(`- **Decision:** ${fmt(card.decision)}`);
+  lines.push(`- **Risk Level:** ${fmt(card.riskLevel)}`);
+  lines.push(`- **Probability of Default:** ${card.probabilityOfDefault != null ? (card.probabilityOfDefault * 100).toFixed(1) + "%" : "not available"}`);
+  lines.push(`- **Pre-Screen Status:** ${fmt(card.preScreenStatus)}`);
+  lines.push(`- **Eligible Amount:** ${fmtAmount(card.eligibleAmount)}`);
+  if (card.decisionReason) lines.push(`- **Decision Reason:** ${card.decisionReason}`);
   lines.push("");
 
-  lines.push("── Applicant Profile ──");
-  lines.push(`Borrower Type: ${fmt(card.borrowerType)}`);
-  lines.push(`Age: ${fmt(card.age)} | Gender: ${fmt(card.gender)} | Occupation: ${fmt(card.occupation)}`);
-  lines.push(`Credit Score: ${fmt(card.creditScore)}`);
+  lines.push("### Applicant Profile");
+  lines.push(`- **Borrower Type:** ${fmt(card.borrowerType)}`);
+  lines.push(`- **Demographics:** Age ${fmt(card.age)} | ${fmt(card.gender)}`);
+  lines.push(`- **Occupation:** ${fmt(card.occupation)}`);
+  lines.push(`- **Credit Score:** ${fmt(card.creditScore)}`);
   if (card.monthlyIncome != null)
-    lines.push(`Monthly Income: ${fmtAmount(card.monthlyIncome)}`);
+    lines.push(`- **Monthly Income:** ${fmtAmount(card.monthlyIncome)}`);
   if (card.annualIncomeEstimate != null)
-    lines.push(`Annual Income Estimate: ${fmtAmount(card.annualIncomeEstimate)}`);
+    lines.push(`- **Annual Income Estimate:** ${fmtAmount(card.annualIncomeEstimate)}`);
   if (card.totalExistingEmiBurden != null)
-    lines.push(`Existing EMI Burden: ${fmtAmount(card.totalExistingEmiBurden)}`);
+    lines.push(`- **Existing EMI Burden:** ${fmtAmount(card.totalExistingEmiBurden)}`);
   lines.push("");
 
-  lines.push("── Risk Factors ──");
-  if (card.topPositiveFactors?.length)
-    lines.push(`Strengths: ${card.topPositiveFactors.join("; ")}`);
-  if (card.topNegativeFactors?.length)
-    lines.push(`Concerns: ${card.topNegativeFactors.join("; ")}`);
-  if (card.amlFlags?.length)
-    lines.push(`AML Flags: ${card.amlFlags.join(", ")}`);
-  lines.push("");
+  if (card.topPositiveFactors?.length || card.topNegativeFactors?.length || card.amlFlags?.length) {
+    lines.push("### Risk Factors");
+    
+    if (card.topPositiveFactors?.length) {
+      lines.push("**Strengths:**");
+      card.topPositiveFactors.forEach(f => lines.push(`- ${f}`));
+    }
+    
+    if (card.topNegativeFactors?.length) {
+      lines.push("**Concerns:**");
+      card.topNegativeFactors.forEach(f => lines.push(`- ${f}`));
+    }
+    
+    if (card.amlFlags?.length) {
+      lines.push("**AML Flags:**");
+      card.amlFlags.forEach(f => lines.push(`- ${f}`));
+    }
+    lines.push("");
+  }
 
-  lines.push("── Verification ──");
-  lines.push(`Docs Verified: ${fmt(card.docsVerified)} | Identity Verified: ${fmt(card.identityVerified)}`);
-  lines.push(`Bank Account: ${fmt(card.hasBankAccount)} | UPI History: ${fmt(card.hasUpiHistory)}`);
+  lines.push("### Verification Status");
+  lines.push(`- **Docs Verified:** ${fmt(card.docsVerified)}`);
+  lines.push(`- **Identity Verified:** ${fmt(card.identityVerified)}`);
+  lines.push(`- **Bank Account Attached:** ${fmt(card.hasBankAccount)}`);
+  lines.push(`- **UPI History Available:** ${fmt(card.hasUpiHistory)}`);
 
   return lines.join("\n");
 }

@@ -4,6 +4,8 @@ import { useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { apiClient } from "../services/apiClient";
 import { Send, Bot } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || "http://localhost:8000/api";
 
@@ -418,14 +420,46 @@ export function AdminCopilot() {
                       } animate-in fade-in slide-in-from-bottom-1 duration-200`}
                     >
                       <div
-                        className={`max-w-[80%] rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-md border border-black/10 whitespace-pre-line ${
+                        className={`max-w-[85%] rounded-2xl px-5 py-4 text-sm leading-relaxed shadow-lg border border-black/10 ${
                           msg.sender === "user"
-                            ? "bg-black text-white rounded-br-sm"
-                            : "bg-blue-600/90 text-white rounded-bl-sm"
+                            ? "bg-black text-white rounded-br-none"
+                            : "bg-blue-700 text-white rounded-bl-none"
                         }`}
                       >
-                        <div className="font-black uppercase tracking-[0.18em]">{msg.text}</div>
-                        <div className="mt-1 text-[9px] text-white/70 text-right font-black tracking-[0.15em]">
+                        <div className={`max-w-none break-words overflow-wrap-anywhere ${msg.sender === "user" ? "font-black uppercase tracking-[0.14em]" : "font-normal"}`}>
+                          {msg.sender === "bot" ? (
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                p: ({ children }) => <p className="mb-4 last:mb-0 leading-relaxed text-slate-100">{children}</p>,
+                                ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-2 text-slate-100 block">{children}</ul>,
+                                ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-2 text-slate-100 block">{children}</ol>,
+                                li: ({ children }) => <li className="pl-1 leading-relaxed break-words">{children}</li>,
+                                h1: ({ children }) => <h1 className="text-base font-black uppercase mb-3 border-b border-white/30 pb-1 text-white block break-words">{children}</h1>,
+                                h2: ({ children }) => <h2 className="text-sm font-black uppercase mt-6 mb-3 text-white block">{children}</h2>,
+                                h3: ({ children }) => <h3 className="text-[12px] font-black uppercase mt-4 mb-2 text-white block">{children}</h3>,
+                                hr: () => <hr className="my-6 border-white/20" />,
+                                strong: ({ children }) => <strong className="font-bold text-white bg-blue-500/30 px-1 rounded">{children}</strong>,
+                                table: ({ children }) => (
+                                  <div className="overflow-x-auto my-5 border-[1.5px] border-white/30 rounded bg-white/5 shadow-inner">
+                                    <table className="w-full text-left border-collapse text-[11px] text-white">
+                                      {children}
+                                    </table>
+                                  </div>
+                                ),
+                                thead: ({ children }) => <thead className="bg-white/20">{children}</thead>,
+                                th: ({ children }) => <th className="p-3 border-b border-white/30 font-black uppercase tracking-wider">{children}</th>,
+                                td: ({ children }) => <td className="p-3 border-b border-white/10">{children}</td>,
+                                blockquote: ({ children }) => <div className="border-l-4 border-white/40 pl-4 py-2 italic my-5 bg-white/10 rounded-r">{children}</div>
+                              }}
+                            >
+                              {msg.text}
+                            </ReactMarkdown>
+                          ) : (
+                            msg.text
+                          )}
+                        </div>
+                        <div className="mt-2 text-[9px] text-white/70 text-right font-black tracking-[0.15em]">
                           {msg.timestamp}
                         </div>
                       </div>
