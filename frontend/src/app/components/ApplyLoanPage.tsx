@@ -2483,7 +2483,7 @@ export function ApplyLoanPage() {
 
                   {occupation === 'Gig Worker' && (
                     <div className="flex items-start gap-3 mt-4">
-                      <input type="checkbox" id="gig-confirm" className="mt-0.5 w-4 h-4 rounded border-slate-400 bg-white appearance-none checked:bg-blue-600 checked:border-blue-600 relative after:content-[''] after:absolute after:hidden checked:after:block after:left-[5px] after:top-[2px] after:w-[6px] after:h-[10px] after:border-solid after:border-white after:border-r-2 after:border-b-2 after:rotate-45 cursor-pointer flex-shrink-0" />
+                      <input type="checkbox" id="gig-confirm" className="mt-0.5 w-4 h-4 cursor-pointer flex-shrink-0" />
                       <Label htmlFor="gig-confirm" className="text-sm text-slate-700 font-normal cursor-pointer hover:text-slate-900 transition-colors flex-1">
                         OR I confirm that I actively work on this platform
                       </Label>
@@ -2492,13 +2492,13 @@ export function ApplyLoanPage() {
 
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6 mb-2 space-y-3">
                     <div className="flex items-start gap-4">
-                      <input type="checkbox" id="assets-confirm" checked={assetsConfirmed} onChange={(e) => setAssetsConfirmed(e.target.checked)} className="mt-0.5 w-5 h-5 rounded border-slate-400 bg-white appearance-none checked:bg-blue-600 checked:border-blue-600 relative after:content-[''] after:absolute after:hidden checked:after:block after:left-[7px] after:top-[3px] after:w-[6px] after:h-[12px] after:border-solid after:border-white after:border-r-[2.5px] after:border-b-[2.5px] after:rotate-45 cursor-pointer flex-shrink-0" />
+                      <input type="checkbox" id="assets-confirm" checked={assetsConfirmed} onChange={(e) => setAssetsConfirmed(e.target.checked)} className="mt-0.5 w-5 h-5 cursor-pointer flex-shrink-0" />
                       <Label htmlFor="assets-confirm" className="text-sm text-slate-900 font-medium cursor-pointer leading-tight">
                         I confirm that the physical or financial assets provided are correct.
                       </Label>
                     </div>
                     <div className="flex items-start gap-4">
-                      <input type="checkbox" id="final-confirm" checked={finalConfirmed} onChange={(e) => setFinalConfirmed(e.target.checked)} className="mt-0.5 w-5 h-5 rounded border-slate-400 bg-white appearance-none checked:bg-blue-600 checked:border-blue-600 relative after:content-[''] after:absolute after:hidden checked:after:block after:left-[7px] after:top-[3px] after:w-[6px] after:h-[12px] after:border-solid after:border-white after:border-r-[2.5px] after:border-b-[2.5px] after:rotate-45 cursor-pointer flex-shrink-0" />
+                      <input type="checkbox" id="final-confirm" checked={finalConfirmed} onChange={(e) => setFinalConfirmed(e.target.checked)} className="mt-0.5 w-5 h-5 cursor-pointer flex-shrink-0" />
                       <Label htmlFor="final-confirm" className="text-sm text-slate-900 font-medium cursor-pointer leading-tight">
                         I confirm that the information provided is true to the best of my knowledge and I authorize Barclays to verify these details.
                       </Label>
@@ -2565,7 +2565,7 @@ export function ApplyLoanPage() {
               <div className="sm:col-span-2 border-[1.5px] border-black bg-white p-6 grid grid-cols-2 sm:grid-cols-4 gap-6 divide-y sm:divide-y-0 sm:divide-x-[1.5px] divide-black shadow-[4px_4px_0_0_rgba(0,0,0,1)]">
                 <div className="flex flex-col gap-1 sm:pt-0 pt-0">
                   <span className="text-xs font-black text-black/40 uppercase tracking-[0.1em]">Applicant</span>
-                  <span className="text-base font-black text-black uppercase tracking-tight truncate">User Name</span>
+                  <span className="text-base font-black text-black uppercase tracking-tight truncate">{userInfo.fullName || "User Name"}</span>
                 </div>
                 <div className="flex flex-col gap-1 sm:pl-6 pt-4 sm:pt-0">
                   <span className="text-xs font-black text-black/40 uppercase tracking-[0.1em]">Occupation</span>
@@ -2976,7 +2976,7 @@ export function ApplyLoanPage() {
               </div>
 
               <div className="sm:col-span-2 border-[1.5px] border-black bg-white p-6 grid grid-cols-2 sm:grid-cols-4 gap-6 divide-y sm:divide-y-0 sm:divide-x-[1.5px] divide-black shadow-[4px_4px_0_0_rgba(0,0,0,1)]">
-                <div className="flex flex-col gap-1 sm:pt-0 pt-0"><span className="text-xs font-black text-black/40 uppercase tracking-[0.1em]">Applicant</span><span className="text-base font-black text-black uppercase tracking-tight truncate">Student</span></div>
+                <div className="flex flex-col gap-1 sm:pt-0 pt-0"><span className="text-xs font-black text-black/40 uppercase tracking-[0.1em]">Applicant</span><span className="text-base font-black text-black uppercase tracking-tight truncate">{userInfo.fullName || "Student"}</span></div>
                 <div className="flex flex-col gap-1 sm:pl-6 pt-4 sm:pt-0"><span className="text-xs font-black text-black/40 uppercase tracking-[0.1em]">Course</span><span className="text-base font-black text-black uppercase tracking-tight truncate">{courseName || '-'}</span></div>
                 <div className="flex flex-col gap-1 sm:pl-6 pt-4 sm:pt-0"><span className="text-xs font-black text-black/40 uppercase tracking-[0.1em]">University</span><span className="text-base font-black text-black uppercase tracking-tight truncate">{university || '-'}</span></div>
                 <div className="flex flex-col gap-1 sm:pl-6 pt-4 sm:pt-0"><span className="text-xs font-black text-black/40 uppercase tracking-[0.1em]">Co-applicant</span><span className="text-base font-black text-black uppercase tracking-tight truncate">{coApplicant === 'yes' ? 'Yes' : 'No'}</span></div>

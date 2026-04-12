@@ -130,7 +130,7 @@ const INTENT_RULES = [
     confidence: "high",
     test: (q) =>
       OBJECT_ID_RE.test(q) ||
-      /\b(show|pull up|fetch|get|display|open|load|find|lookup|look up|give|provide|view|see)\b/.test(q) &&
+      /\b(show|pull up|fetch|get|display|open|load|find|lookup|look up|give|provide|view|see|tell me|tell|explain|summarize|give info|info|details|what is|summary)\b/.test(q) &&
         /\b(application|applicant|case|record|profile|loan|details?|info(?:rmation)?|user|borrower|customer|client)\b/.test(q),
   },
 

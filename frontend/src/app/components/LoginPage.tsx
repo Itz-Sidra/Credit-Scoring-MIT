@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "./ui/button";
@@ -17,6 +18,7 @@ export function LoginPage() {
   const [mobile, setMobile] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [otp, setOtp] = useState("");
   const [showOtp, setShowOtp] = useState(false);
   const [otpFor, setOtpFor] = useState<"login" | "signup-email">("login");
@@ -326,16 +328,25 @@ export function LoginPage() {
             )}
 
             <div className="group">
-              <Label htmlFor="password/phone" className="text-[10px] font-black uppercase tracking-widest text-gray-400 group-focus-within:text-black transition-colors mb-2 block">
+              <Label htmlFor="password" className="text-[10px] font-black uppercase tracking-widest text-gray-400 group-focus-within:text-black transition-colors mb-2 block">
                 Password
               </Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="h-12 bg-transparent border-[1px] border-black rounded-none shadow-none focus-visible:ring-0 focus-visible:border-[2.5px] transition-all font-bold"
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="h-12 bg-transparent border-[1px] border-black rounded-none shadow-none focus-visible:ring-0 focus-visible:border-[2.5px] transition-all font-bold pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <div className="pt-2">
