@@ -328,7 +328,7 @@ export function LoginPage() {
             )}
 
             <div className="group">
-              <Label htmlFor="password/phone" className="text-[10px] font-black uppercase tracking-widest text-gray-400 group-focus-within:text-black transition-colors mb-2 block">
+              <Label htmlFor="password" className="text-[10px] font-black uppercase tracking-widest text-gray-400 group-focus-within:text-black transition-colors mb-2 block">
                 Password
               </Label>
               <div className="relative">
