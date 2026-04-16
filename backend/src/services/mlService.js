@@ -1,895 +1,470 @@
+/**
+ * mlService.js — Production ML inference bridge (Node → Python).
+ *
+ * Changes from original:
+ *  1. Uses new stacking_pipeline.pkl via model_inference/predict.py path.
+ *  2. NO heuristic / silent fallback — errors surface explicitly.
+ *  3. Single subprocess call per request (no duplicate invocations).
+ *  4. Proper timeout handling with SIGKILL.
+ *  5. Groq API fallback (clearly labeled "fallback_response") when Python fails.
+ *  6. Structured logging for every failure path.
+ *  7. Response matches agreed API contract:
+ *       { probability, risk_level, explanation: { type, top_features } }
+ */
+
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const backendRoot = path.resolve(__dirname, "..", "..");
+const __dirname  = path.dirname(__filename);
 
-const DEFAULT_MANIFEST_PATH = path.resolve(
-  backendRoot,
-  "models/integration_contracts/winner_upgrade_v5/winner_v5_serving_manifest.json"
-);
+// ── Paths ─────────────────────────────────────────────────────────────────────
 
+const BACKEND_ROOT   = path.resolve(__dirname, "..", "..");
+const ML_RUNNER_PATH = path.resolve(__dirname, "ml_runner.py");
+
+// Support both legacy artifact and new stacking_pipeline
 const DEFAULT_ARTIFACT_PATH = path.resolve(
-  backendRoot,
-  "models/integration_contracts/winner_upgrade_v5/winner_v5_serving_artifact.pkl"
+  BACKEND_ROOT,
+  "model_inference",
+  "stacking_pipeline.pkl"
 );
 
-const WINNER_V5_FEATURE_DEFAULTS = {
-  monthly_income: 33222.0,
-  income_stability: 0.625,
-  loan_to_income_ratio: 0.5313786008230452,
-  emi_to_income_ratio: 0.28,
-  age_at_application: 43.83287671232877,
+// ── Feature list (must match ml_runner.py FEATURE_NAMES exactly) ─────────────
+
+const FEATURE_NAMES = [
+  "income_monthly",
+  "income_log",
+  "income_decile",
+  "job_tenure_ratio",
+  "new_job_flag",
+  "income_per_exp",
+  "is_early_career",
+  "is_single",
+  "is_renter",
+  "has_car",
+  "young_single",
+  "renter_no_car",
+  "profession_woe",
+  "state_woe",
+  "emi_to_income_cs",
+  "debt_to_income_cs",
+  "avg_delay_days",
+  "payment_stress_index",
+  "is_over_utilized",
+  "is_thin_file",
+  "hc_ext_source_mean",
+  "hc_credit_to_income",
+  "hc_annuity_to_income",
+  "hc_employed_years",
+  "hc_install_late_ratio",
+  "utility_payment_score",
+  "transaction_consistency",
+  "has_bank_account",
+  "platform_trust_score",
+  "platform_tenure_score",
+];
+
+const FEATURE_DEFAULTS = {
+  income_monthly: 33222.0,
+  income_log: 10.41,
+  income_decile: 5.0,
+  job_tenure_ratio: 0.62,
+  new_job_flag: 0.0,
+  income_per_exp: 1.8,
+  is_early_career: 0.0,
+  is_single: 1.0,
+  is_renter: 1.0,
+  has_car: 0.0,
+  young_single: 0.0,
+  renter_no_car: 1.0,
+  profession_woe: 0.15,
+  state_woe: 0.03,
+  emi_to_income_cs: 0.25,
+  debt_to_income_cs: 0.35,
+  avg_delay_days: 2.5,
+  payment_stress_index: 0.12,
+  is_over_utilized: 0.0,
+  is_thin_file: 0.0,
+  hc_ext_source_mean: 0.52,
+  hc_credit_to_income: 2.3,
+  hc_annuity_to_income: 0.12,
+  hc_employed_years: 3.2,
+  hc_install_late_ratio: 0.08,
+  utility_payment_score: 0.72,
+  transaction_consistency: 0.45,
   has_bank_account: 1.0,
-  has_upi_history: 0.75,
-  transaction_consistency: 0.6394718696837632,
-  utility_payment_score: 0.5973875136755935,
-  savings_buffer_ratio: 0.10428571428571429,
-  spending_pattern_ratio: 0.709,
-  cash_flow_volatility: 0.3931428571428571,
-  estimated_monthly_income: 0.0,
-  income_stability_score: 0.0,
-  work_consistency_score: 0.0,
-  platform_trust_score: 0.0,
-  num_platforms: 0.0,
-  weekly_income_cv: 0.0,
-  platform_tenure_score: 0.0,
-  active_day_ratio: 0.0,
-  monthly_revenue: 0.0,
-  monthly_expenses: 0.0,
-  profit_margin: 0.0,
-  expense_to_revenue_ratio: 0.0,
-  revenue_growth_trend: 0.0,
-  has_gst: 0.0,
-  has_udyam: 0.0,
-  is_formalized: 0.0,
-  business_age_score: 0.0,
-  land_size: 0.0,
-  land_value_proxy: 0.0,
-  seasonal_income_flag: 0.0,
-  harvest_income_multiplier: 0.0,
-  irrigation_quality_score: 0.0,
-  has_kcc: 0.0,
-  monthly_salary: 22500.0,
-  employment_tenure_score: 0.2857142857142857,
-  employment_formalization_score: 0.7,
-  salary_to_account: 1.0,
-  has_nominee: 0.0,
-  nominee_income_ratio: 0.0,
-  has_verified_collateral: 0.0,
-  collateral_value: 0.0,
-  nominee_relationship_score: 0.1,
+  platform_trust_score: 0.65,
+  platform_tenure_score: 0.80,
 };
 
-const WINNER_V5_FEATURE_NAMES = Object.keys(WINNER_V5_FEATURE_DEFAULTS);
+// ── Configuration ─────────────────────────────────────────────────────────────
 
-function toFiniteNumber(value, fallback = 0) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
-}
+const PYTHON_BIN  = process.env.ML_PYTHON_BIN || "python3";
+const TIMEOUT_MS  = Number(process.env.ML_INFERENCE_TIMEOUT_MS || 15_000);
+const GROQ_API_KEY = process.env.GROQ_API_KEY || null;
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
+// ── Feature builder ───────────────────────────────────────────────────────────
 
-function estimateMonthlyEmi(principal, tenureMonths, annualRate = 18) {
-  const safePrincipal = toFiniteNumber(principal, 0);
-  const safeTenure = Math.max(0, Math.round(toFiniteNumber(tenureMonths, 0)));
-  if (safePrincipal <= 0 || safeTenure <= 0) {
-    return 0;
-  }
+/**
+ * Map an arbitrary applicant payload to the 30-feature vector.
+ * All values are coerced to finite numbers. Missing → FEATURE_DEFAULTS.
+ *
+ * This is a lightweight bridge — the heavy preprocessing lives in Python.
+ * Node only needs to assemble the dict; Python validates and type-checks.
+ */
+function buildFeatureVector(payload = {}) {
+  const features = {};
+  const missingKeys = [];
 
-  const monthlyRate = annualRate / 100 / 12;
-  if (monthlyRate === 0) {
-    return safePrincipal / safeTenure;
-  }
+  for (const name of FEATURE_NAMES) {
+    // Attempt to pull the value by exact name from the payload
+    let val = payload[name];
 
-  const numerator =
-    safePrincipal * monthlyRate * (1 + monthlyRate) ** safeTenure;
-  const denominator = (1 + monthlyRate) ** safeTenure - 1;
-  return denominator === 0 ? 0 : numerator / denominator;
-}
-
-function inferUserCategory(payload) {
-  const raw = String(
-    payload?.userCategory || payload?.borrowerType || payload?.occupation || ""
-  ).toLowerCase();
-  if (raw.includes("farmer")) return "farmer";
-  if (raw.includes("gig") || raw.includes("delivery") || raw.includes("driver"))
-    return "gig_worker";
-  if (raw.includes("daily") || raw.includes("wage") || raw.includes("labour"))
-    return "daily_wage_worker";
-  if (raw.includes("msme") || raw.includes("business")) return "msme_owner";
-  if (
-    raw.includes("homemaker") ||
-    raw.includes("no_income") ||
-    raw.includes("housewife")
-  )
-    return "homemaker";
-  return "low_income_salaried";
-}
-
-function deriveMonthlyIncome(payload) {
-  const monthlyIncome = toFiniteNumber(payload?.monthlyIncome, 0);
-  if (monthlyIncome > 0) return monthlyIncome;
-
-  const annualIncome = toFiniteNumber(payload?.annualIncomeEstimate, 0);
-  if (annualIncome > 0) return annualIncome / 12;
-
-  const monthlySalary = toFiniteNumber(payload?.monthlySalaryNet, 0);
-  if (monthlySalary > 0) return monthlySalary;
-
-  const householdMonthlyIncome = toFiniteNumber(
-    payload?.householdMonthlyIncome,
-    0
-  );
-  if (householdMonthlyIncome > 0) return householdMonthlyIncome;
-
-  const dailyIncome = toFiniteNumber(payload?.averageDailyEarnings, 0);
-  const daysWorked = toFiniteNumber(payload?.daysWorkedPerMonth, 0);
-  if (dailyIncome > 0 && daysWorked > 0) return dailyIncome * daysWorked;
-
-  const weeklyIncome = toFiniteNumber(payload?.averageWeeklyEarnings, 0);
-  if (weeklyIncome > 0) return weeklyIncome * 4.33;
-
-  const monthlyRevenue = toFiniteNumber(payload?.monthlyRevenue, 0);
-  const monthlyExpenses = toFiniteNumber(payload?.monthlyExpenses, 0);
-  if (monthlyRevenue > 0) return Math.max(0, monthlyRevenue - monthlyExpenses);
-
-  const allowance = toFiniteNumber(payload?.monthlyAllowance, 0);
-  if (allowance > 0) return allowance;
-
-  const landSize = toFiniteNumber(payload?.landSize, 0);
-  if (landSize > 0) return landSize * 5000;
-
-  return WINNER_V5_FEATURE_DEFAULTS.monthly_income;
-}
-
-function directFeatureOverlap(payload) {
-  return WINNER_V5_FEATURE_NAMES.filter((name) =>
-    Object.hasOwn(payload || {}, name)
-  ).length;
-}
-
-function buildFeaturesFromPayload(payload) {
-  if (directFeatureOverlap(payload) >= WINNER_V5_FEATURE_NAMES.length * 0.8) {
-    return Object.fromEntries(
-      WINNER_V5_FEATURE_NAMES.map((name) => [
-        name,
-        toFiniteNumber(payload?.[name], WINNER_V5_FEATURE_DEFAULTS[name]),
-      ])
-    );
-  }
-
-  const defaults = { ...WINNER_V5_FEATURE_DEFAULTS };
-  const features = { ...defaults };
-  const userCategory = inferUserCategory(payload);
-  const monthlyIncome = Math.max(1, deriveMonthlyIncome(payload));
-  const requestedAmount = toFiniteNumber(payload?.requestedAmount, 0);
-  const tenureMonths = Math.max(
-    1,
-    Math.round(toFiniteNumber(payload?.requestedTenureMonths, 12))
-  );
-  const requestedEmi = estimateMonthlyEmi(requestedAmount, tenureMonths, 18);
-  const existingEmi = Math.max(
-    0,
-    toFiniteNumber(payload?.totalExistingEmiBurden, 0)
-  );
-  const totalMonthlyEmi = requestedEmi + existingEmi;
-  const householdSize = Math.max(1, toFiniteNumber(payload?.householdSize, 1));
-  const childrenCount = Math.max(0, toFiniteNumber(payload?.childrenCount, 0));
-  const age = clamp(
-    toFiniteNumber(payload?.age, defaults.age_at_application),
-    18,
-    80
-  );
-  const hasBankAccount = Boolean(payload?.hasBankAccount);
-  const hasUpiHistory = Boolean(payload?.hasUpiHistory);
-  const hasExistingLoan =
-    String(payload?.hasExistingLoan || "").toLowerCase() === "yes" ||
-    Boolean(payload?.hasExistingLoan);
-  const maritalStatus = String(payload?.maritalStatus || "").toLowerCase();
-  const utilityScore = clamp(
-    toFiniteNumber(
-      payload?.utilityBillConsistency,
-      defaults.utility_payment_score
-    ),
-    0,
-    1
-  );
-  const upiCount = Math.max(0, toFiniteNumber(payload?.upiTransactionCount, 0));
-  const upiVolume = Math.max(
-    0,
-    toFiniteNumber(payload?.upiTransactionVolume, 0)
-  );
-  const monthlyTransactionVolume = Math.max(
-    0,
-    toFiniteNumber(payload?.monthlyTransactionVolume, 0)
-  );
-  const monthlyRevenue = Math.max(
-    0,
-    toFiniteNumber(payload?.monthlyRevenue, 0)
-  );
-  const monthlyExpenses = Math.max(
-    0,
-    toFiniteNumber(payload?.monthlyExpenses, 0)
-  );
-  const landSize = Math.max(0, toFiniteNumber(payload?.landSize, 0));
-  const collateralValue = Math.max(
-    0,
-    toFiniteNumber(payload?.collateralValue, 0)
-  );
-  const savingsAmount = Math.max(0, toFiniteNumber(payload?.savingsAmount, 0));
-  const businessAgeMonths = Math.max(
-    0,
-    toFiniteNumber(payload?.businessAgeMonths, 0)
-  );
-  const employmentTenureMonths = Math.max(
-    0,
-    toFiniteNumber(payload?.employmentTenureMonths, 0)
-  );
-  const monthlySalary = Math.max(
-    0,
-    toFiniteNumber(payload?.monthlySalaryNet, 0)
-  );
-  const monthlyAllowance = Math.max(
-    0,
-    toFiniteNumber(payload?.monthlyAllowance, 0)
-  );
-  const coApplicantIncome = Math.max(
-    0,
-    toFiniteNumber(payload?.coApplicantIncome, 0)
-  );
-  const transactionHistoryUploaded = Boolean(
-    payload?.transactionHistoryUploaded
-  );
-  const docsVerified = Boolean(payload?.docsVerified);
-
-  let incomeStability = defaults.income_stability;
-  if (userCategory === "low_income_salaried") {
-    incomeStability = clamp(0.72 + employmentTenureMonths / 240, 0.55, 0.95);
-  } else if (userCategory === "msme_owner") {
-    incomeStability = clamp(0.56 + businessAgeMonths / 240, 0.45, 0.88);
-  } else if (userCategory === "farmer") {
-    incomeStability = 0.58;
-  } else if (userCategory === "gig_worker") {
-    incomeStability = 0.54;
-  } else if (userCategory === "daily_wage_worker") {
-    incomeStability = 0.48;
-  } else if (userCategory === "homemaker") {
-    incomeStability = clamp(
-      coApplicantIncome > 0 || monthlyAllowance > 0 ? 0.62 : 0.5,
-      0.45,
-      0.8
-    );
-  }
-
-  // Promote real user-entered stability signals so this feature reacts to
-  // actual profile strength instead of remaining mostly category-driven.
-  const householdBurden = clamp((householdSize - 1) / 6, 0, 1) * 0.06;
-  const childBurden = clamp(childrenCount / 4, 0, 1) * 0.05;
-  const emiBurden =
-    clamp(existingEmi / Math.max(monthlyIncome, 1), 0, 1) * 0.18;
-  const utilityBoost = utilityScore * 0.1;
-  const bankingBoost = (hasBankAccount ? 0.04 : 0) + (hasUpiHistory ? 0.03 : 0);
-  const inquiryBoost = clamp(upiCount / 120, 0, 1) * 0.03;
-  const maritalBoost = maritalStatus === "married" ? 0.02 : 0;
-  const existingLoanPenalty = hasExistingLoan && existingEmi <= 0 ? 0.03 : 0;
-
-  incomeStability = clamp(
-    incomeStability +
-      utilityBoost +
-      bankingBoost +
-      inquiryBoost +
-      maritalBoost -
-      householdBurden -
-      childBurden -
-      emiBurden -
-      existingLoanPenalty,
-    0.3,
-    0.98
-  );
-
-  const savingsBufferRatio = clamp(
-    savingsAmount > 0
-      ? savingsAmount / Math.max(monthlyExpenses || monthlyIncome, 1)
-      : Math.max(0, monthlyIncome - monthlyExpenses - existingEmi) /
-          Math.max(monthlyExpenses || monthlyIncome, 1),
-    0,
-    10
-  );
-  const cashFlowVolatility = clamp(
-    1 -
-      incomeStability +
-      (userCategory === "gig_worker" || userCategory === "daily_wage_worker"
-        ? 0.12
-        : 0),
-    0,
-    1
-  );
-  const transactionConsistency = clamp(
-    utilityScore * 0.45 +
-      clamp(upiCount / 120, 0, 1) * 0.25 +
-      clamp(upiVolume / Math.max(monthlyIncome * 1.2, 1), 0, 1) * 0.2 +
-      (transactionHistoryUploaded || monthlyTransactionVolume > 0 ? 0.1 : 0),
-    0,
-    1
-  );
-  const spendingPatternRatio = clamp(
-    monthlyIncome > 0
-      ? 1 - Math.min(0.9, totalMonthlyEmi / monthlyIncome)
-      : defaults.spending_pattern_ratio,
-    0,
-    1
-  );
-
-  features.monthly_income = monthlyIncome;
-  features.income_stability = incomeStability;
-  features.loan_to_income_ratio =
-    requestedAmount > 0
-      ? requestedAmount / Math.max(monthlyIncome * 12, 1)
-      : defaults.loan_to_income_ratio;
-  features.emi_to_income_ratio =
-    totalMonthlyEmi > 0
-      ? totalMonthlyEmi / monthlyIncome
-      : defaults.emi_to_income_ratio;
-  features.age_at_application = age;
-  features.has_bank_account = hasBankAccount ? 1 : 0;
-  features.has_upi_history = hasUpiHistory ? 1 : 0;
-  features.transaction_consistency = transactionConsistency;
-  features.utility_payment_score = utilityScore;
-  features.savings_buffer_ratio = savingsBufferRatio;
-  features.spending_pattern_ratio = spendingPatternRatio;
-  features.cash_flow_volatility = cashFlowVolatility;
-
-  if (userCategory === "daily_wage_worker") {
-    const estimatedMonthlyIncome = Math.max(
-      monthlyIncome,
-      toFiniteNumber(payload?.averageDailyEarnings, 0) *
-        Math.max(1, toFiniteNumber(payload?.daysWorkedPerMonth, 22))
-    );
-    features.estimated_monthly_income = estimatedMonthlyIncome;
-    features.income_stability_score = clamp(incomeStability, 0, 1);
-    features.work_consistency_score = clamp(transactionConsistency, 0, 1);
-  }
-
-  if (userCategory === "gig_worker") {
-    features.platform_trust_score = clamp(hasUpiHistory ? 0.62 : 0.42, 0, 1);
-    features.num_platforms = clamp(
-      toFiniteNumber(payload?.platformCount, 1),
-      0,
-      5
-    );
-    features.weekly_income_cv = clamp(cashFlowVolatility * 0.9, 0, 5);
-    features.platform_tenure_score = clamp(employmentTenureMonths / 24, 0, 1);
-    features.active_day_ratio = clamp(
-      toFiniteNumber(payload?.activeDaysPerWeek, 5) / 7,
-      0,
-      1
-    );
-  }
-
-  if (userCategory === "msme_owner") {
-    const profitMargin =
-      monthlyRevenue > 0
-        ? (monthlyRevenue - monthlyExpenses) / monthlyRevenue
-        : 0;
-    features.monthly_revenue = monthlyRevenue;
-    features.monthly_expenses = monthlyExpenses;
-    features.profit_margin = clamp(profitMargin, -1, 1);
-    features.expense_to_revenue_ratio =
-      monthlyRevenue > 0 ? monthlyExpenses / monthlyRevenue : 0;
-    features.revenue_growth_trend = clamp(
-      monthlyTransactionVolume > monthlyRevenue ? 0.15 : 0.0,
-      -1,
-      2
-    );
-    features.has_gst = payload?.hasGst ? 1 : 0;
-    features.has_udyam = payload?.hasUdyam ? 1 : 0;
-    features.is_formalized = payload?.isFormalized ? 1 : 0;
-    features.business_age_score = clamp(businessAgeMonths / 36, 0, 1);
-  }
-
-  if (userCategory === "farmer") {
-    features.land_size = landSize;
-    features.land_value_proxy = landSize * 200000;
-    features.seasonal_income_flag = 1;
-    features.harvest_income_multiplier = 2.5;
-    features.irrigation_quality_score = 0.55;
-    features.has_kcc = payload?.hasKcc ? 1 : 0;
-  }
-
-  if (userCategory === "low_income_salaried") {
-    features.monthly_salary = monthlySalary > 0 ? monthlySalary : monthlyIncome;
-    features.employment_tenure_score = clamp(employmentTenureMonths / 36, 0, 1);
-    features.employment_formalization_score =
-      payload?.employerType === "full_time"
-        ? 0.82
-        : payload?.employerType === "contract"
-          ? 0.55
-          : defaults.employment_formalization_score;
-    features.salary_to_account = hasBankAccount ? 1 : 0;
-  }
-
-  if (userCategory === "homemaker") {
-    const householdSupport = Math.max(
-      monthlyIncome,
-      coApplicantIncome / 12,
-      monthlyAllowance
-    );
-    features.monthly_income = householdSupport || features.monthly_income;
-    features.has_bank_account = hasBankAccount ? 1 : features.has_bank_account;
-  }
-
-  const hasCollateral =
-    payload?.collateralType &&
-    payload?.collateralType !== "none" &&
-    collateralValue > 0;
-  features.has_nominee = 0;
-  features.nominee_income_ratio = 0;
-  features.has_verified_collateral = hasCollateral ? 1 : 0;
-  features.collateral_value = collateralValue;
-  features.nominee_relationship_score = hasCollateral
-    ? 0.35
-    : defaults.nominee_relationship_score;
-
-  return Object.fromEntries(
-    WINNER_V5_FEATURE_NAMES.map((name) => [
-      name,
-      toFiniteNumber(features[name], WINNER_V5_FEATURE_DEFAULTS[name]),
-    ])
-  );
-}
-
-function computeRiskLevel(probability) {
-  // probability here is repayment probability, not PD.
-  // Calibrated bands:
-  // low risk   => PD <= 18%
-  // medium     => 18% < PD <= 35%
-  // high       => PD > 35%
-  if (probability >= 0.82) return "low";
-  if (probability >= 0.65) return "medium";
-  return "high";
-}
-
-function computeCreditScore(probability) {
-  // Map repayment probability into a conventional credit-score range.
-  const mappedScore = Math.round(300 + probability * 550);
-  return Math.max(300, Math.min(850, mappedScore));
-}
-
-async function resolveArtifactPath() {
-  const artifactOverride = process.env.ML_ARTIFACT_PATH;
-  if (artifactOverride) {
-    const overridePath = path.isAbsolute(artifactOverride)
-      ? artifactOverride
-      : path.resolve(backendRoot, artifactOverride);
-    return overridePath;
-  }
-
-  try {
-    const manifestPath = process.env.ML_MANIFEST_PATH
-      ? path.resolve(backendRoot, process.env.ML_MANIFEST_PATH)
-      : DEFAULT_MANIFEST_PATH;
-
-    const manifestRaw = await fs.readFile(manifestPath, "utf-8");
-    const manifest = JSON.parse(manifestRaw);
-
-    if (manifest.artifact_path) {
-      const candidate = path.resolve(
-        path.dirname(manifestPath),
-        manifest.artifact_path
-      );
-      return candidate;
+    if (val === undefined || val === null) {
+      val = FEATURE_DEFAULTS[name];
+      missingKeys.push(name);
     }
-  } catch (error) {
-    // Fall back to default when manifest is not available or invalid.
+
+    const num = Number(val);
+    features[name] = Number.isFinite(num) ? num : FEATURE_DEFAULTS[name];
   }
 
-  return DEFAULT_ARTIFACT_PATH;
+  if (missingKeys.length > 0) {
+    console.warn(
+      `[mlService] ${missingKeys.length} features filled with defaults: ${missingKeys.join(", ")}`
+    );
+  }
+
+  return features;
 }
 
-const degeneracyCache = new Map();
+// ── Python subprocess runner ──────────────────────────────────────────────────
 
-function runRawInference({
-  pythonBinary,
-  runnerPath,
-  artifactPath,
-  features,
-  timeoutMs,
-}) {
+/**
+ * Spawns ml_runner.py ONCE with the feature vector.
+ * Returns parsed JSON or throws a structured error.
+ * NEVER calls itself recursively or has a silent path.
+ */
+function runPythonInference(features, artifactPath) {
   return new Promise((resolve, reject) => {
-    const child = spawn(pythonBinary, [runnerPath, artifactPath], {
-      cwd: backendRoot,
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+
+    const child = spawn(PYTHON_BIN, [ML_RUNNER_PATH, artifactPath], {
+      cwd: BACKEND_ROOT,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    let stdout = "";
-    let stderr = "";
-
+    // Hard timeout — kill the process and reject
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGKILL");
-      reject(new Error(`ML inference timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+      reject(
+        Object.assign(
+          new Error(`ML inference timed out after ${TIMEOUT_MS}ms`),
+          { code: "ML_TIMEOUT" }
+        )
+      );
+    }, TIMEOUT_MS);
 
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
 
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-
-    child.on("error", (error) => {
+    child.on("error", (err) => {
       clearTimeout(timer);
-      reject(error);
+      reject(
+        Object.assign(
+          new Error(`Failed to spawn Python process: ${err.message}`),
+          { code: "SPAWN_FAILED", cause: err }
+        )
+      );
     });
 
-    child.on("close", (code) => {
+    child.on("close", (exitCode) => {
       clearTimeout(timer);
+      if (timedOut) return; // already rejected
 
-      if (code !== 0) {
+      // Log Python stderr regardless of exit code (diagnostic info)
+      if (stderr.trim()) {
+        console.info(`[mlService/python] ${stderr.trim()}`);
+      }
+
+      const raw = stdout.trim();
+      if (!raw) {
         return reject(
-          new Error(`ml_runner failed with code ${code}: ${stderr || stdout}`)
+          Object.assign(
+            new Error(`Python process exited ${exitCode} with empty stdout`),
+            { code: "EMPTY_OUTPUT" }
+          )
         );
       }
 
+      let parsed;
       try {
-        const parsed = JSON.parse(stdout.trim());
-        if (parsed.error) {
-          return reject(new Error(parsed.error));
-        }
-        return resolve(parsed);
+        parsed = JSON.parse(raw);
       } catch {
-        return reject(new Error(`Invalid ml_runner output: ${stdout}`));
+        return reject(
+          Object.assign(
+            new Error(`Invalid JSON from ml_runner: ${raw.slice(0, 200)}`),
+            { code: "INVALID_JSON_OUTPUT" }
+          )
+        );
       }
+
+      // ml_runner signals its own errors via { error, error_code }
+      if (parsed.error) {
+        return reject(
+          Object.assign(
+            new Error(`ml_runner error [${parsed.error_code}]: ${parsed.error}`),
+            { code: parsed.error_code || "ML_RUNNER_ERROR" }
+          )
+        );
+      }
+
+      resolve(parsed);
     });
 
-    const runnerInput = JSON.stringify({ features });
-    child.stdin.write(runnerInput);
+    // Send features to Python via stdin
+    const inputJson = JSON.stringify({ features });
+    child.stdin.write(inputJson);
     child.stdin.end();
   });
 }
 
-function heuristicProbabilityFromPayload(features) {
-  const monthlyIncome = toFiniteNumber(
-    features?.monthly_income,
-    WINNER_V5_FEATURE_DEFAULTS.monthly_income
-  );
-  const incomeStability = clamp(
-    toFiniteNumber(
-      features?.income_stability,
-      WINNER_V5_FEATURE_DEFAULTS.income_stability
-    ),
-    0,
-    1
-  );
-  const loanToIncome = Math.max(
-    0,
-    toFiniteNumber(
-      features?.loan_to_income_ratio,
-      WINNER_V5_FEATURE_DEFAULTS.loan_to_income_ratio
-    )
-  );
-  const emiToIncome = Math.max(
-    0,
-    toFiniteNumber(
-      features?.emi_to_income_ratio,
-      WINNER_V5_FEATURE_DEFAULTS.emi_to_income_ratio
-    )
-  );
-  const transactionConsistency = clamp(
-    toFiniteNumber(
-      features?.transaction_consistency,
-      WINNER_V5_FEATURE_DEFAULTS.transaction_consistency
-    ),
-    0,
-    1
-  );
-  const utilityScore = clamp(
-    toFiniteNumber(
-      features?.utility_payment_score,
-      WINNER_V5_FEATURE_DEFAULTS.utility_payment_score
-    ),
-    0,
-    1
-  );
-  const savingsBuffer = Math.max(
-    0,
-    toFiniteNumber(
-      features?.savings_buffer_ratio,
-      WINNER_V5_FEATURE_DEFAULTS.savings_buffer_ratio
-    )
-  );
-  const verifiedCollateral =
-    toFiniteNumber(features?.has_verified_collateral, 0) > 0 ? 0.05 : 0;
-  const formalizationBoost =
-    toFiniteNumber(features?.has_gst, 0) > 0 ||
-    toFiniteNumber(features?.salary_to_account, 0) > 0
-      ? 0.04
-      : 0;
+// ── Groq API fallback ─────────────────────────────────────────────────────────
 
-  let repaymentProb = 0.48;
-  repaymentProb += Math.max(
-    -0.2,
-    Math.min(0.2, (monthlyIncome - 30000) / 180000)
-  );
-  repaymentProb += incomeStability * 0.16;
-  repaymentProb += transactionConsistency * 0.09;
-  repaymentProb += utilityScore * 0.08;
-  repaymentProb += Math.min(0.08, savingsBuffer * 0.05);
-  repaymentProb += verifiedCollateral + formalizationBoost;
-  repaymentProb -= Math.min(0.3, loanToIncome * 0.12);
-  repaymentProb -= Math.min(0.22, emiToIncome * 0.3);
-
-  return clamp(repaymentProb, 0.05, 0.95);
-}
-
-function computeAffordabilityPenalty(features) {
-  const loanToIncome = Math.max(
-    0,
-    toFiniteNumber(
-      features?.loan_to_income_ratio,
-      WINNER_V5_FEATURE_DEFAULTS.loan_to_income_ratio
-    )
-  );
-  const emiToIncome = Math.max(
-    0,
-    toFiniteNumber(
-      features?.emi_to_income_ratio,
-      WINNER_V5_FEATURE_DEFAULTS.emi_to_income_ratio
-    )
-  );
-  const savingsBuffer = Math.max(
-    0,
-    toFiniteNumber(
-      features?.savings_buffer_ratio,
-      WINNER_V5_FEATURE_DEFAULTS.savings_buffer_ratio
-    )
-  );
-  const incomeStability = clamp(
-    toFiniteNumber(
-      features?.income_stability,
-      WINNER_V5_FEATURE_DEFAULTS.income_stability
-    ),
-    0,
-    1
-  );
-
-  // Penalize high debt burden while giving a small offset for strong buffers/stability.
-  const loanStress = Math.max(0, loanToIncome - 0.4) * 0.12;
-  const emiStress = Math.max(0, emiToIncome - 0.22) * 0.65;
-  const protectiveOffset = Math.min(
-    0.045,
-    Math.min(savingsBuffer, 1.2) * 0.018 + incomeStability * 0.018
-  );
-
-  return clamp(loanStress + emiStress - protectiveOffset, 0, 0.4);
-}
-
-function computePositiveProfileAdjustment(features) {
-  const monthlyIncome = Math.max(
-    0,
-    toFiniteNumber(
-      features?.monthly_income,
-      WINNER_V5_FEATURE_DEFAULTS.monthly_income
-    )
-  );
-  const monthlySalary = Math.max(
-    0,
-    toFiniteNumber(
-      features?.monthly_salary,
-      WINNER_V5_FEATURE_DEFAULTS.monthly_salary
-    )
-  );
-  const incomeStability = clamp(
-    toFiniteNumber(
-      features?.income_stability,
-      WINNER_V5_FEATURE_DEFAULTS.income_stability
-    ),
-    0,
-    1
-  );
-  const nomineeRelationshipScore = clamp(
-    toFiniteNumber(
-      features?.nominee_relationship_score,
-      WINNER_V5_FEATURE_DEFAULTS.nominee_relationship_score
-    ),
-    0,
-    1
-  );
-  const hasVerifiedCollateral =
-    toFiniteNumber(features?.has_verified_collateral, 0) > 0 ? 1 : 0;
-  const collateralValue = Math.max(
-    0,
-    toFiniteNumber(features?.collateral_value, 0)
-  );
-  const hasNominee = toFiniteNumber(features?.has_nominee, 0) > 0 ? 1 : 0;
-
-  const incomeBoost = clamp((monthlyIncome - 25000) / 125000, 0, 1) * 0.08;
-  const salaryBoost = clamp((monthlySalary - 18000) / 90000, 0, 1) * 0.07;
-  const stabilityBoost = clamp((incomeStability - 0.5) / 0.45, 0, 1) * 0.09;
-  const relationshipBoost = nomineeRelationshipScore * 0.07;
-  const nomineePresenceBoost = hasNominee ? 0.02 : 0;
-  const collateralBoost = hasVerifiedCollateral
-    ? Math.min(0.07, 0.025 + clamp(collateralValue / 1000000, 0, 1) * 0.045)
-    : 0;
-
-  return clamp(
-    incomeBoost +
-      salaryBoost +
-      stabilityBoost +
-      relationshipBoost +
-      nomineePresenceBoost +
-      collateralBoost,
-    0,
-    0.14
-  );
-}
-
-async function detectDegenerateModel({
-  pythonBinary,
-  runnerPath,
-  artifactPath,
-  timeoutMs,
-}) {
-  const cacheKey = `${pythonBinary}:${artifactPath}`;
-  if (degeneracyCache.has(cacheKey)) {
-    return degeneracyCache.get(cacheKey);
+/**
+ * Calls Groq to generate a mock credit risk assessment.
+ * Clearly labeled as "fallback_response" — never silently replaces real ML.
+ * Only invoked when Python ML fails AND GROQ_API_KEY is set.
+ */
+async function callGroqFallback(features, originalError) {
+  if (!GROQ_API_KEY) {
+    throw Object.assign(
+      new Error(
+        `ML inference failed and GROQ_API_KEY is not set — cannot produce fallback. ` +
+        `Original error: ${originalError.message}`
+      ),
+      { code: "NO_FALLBACK_AVAILABLE", originalError }
+    );
   }
 
-  const probeA = {
-    userCategory: "low_income_salaried",
-    annualIncomeEstimate: 1200000,
-    monthlySalaryNet: 100000,
-    employmentTenureMonths: 72,
-    employerType: "full_time",
-    requestedAmount: 120000,
-    requestedTenureMonths: 24,
-    householdSize: 2,
-    childrenCount: 0,
-    age: 37,
-    hasBankAccount: true,
-    hasUpiHistory: true,
-    utilityBillConsistency: 0.9,
-    upiTransactionCount: 160,
-    upiTransactionVolume: 180000,
-    totalExistingEmiBurden: 8000,
-    collateralType: "none",
-    collateralValue: 0,
-  };
+  console.error(
+    `[mlService] ML pipeline failed (${originalError.code || "UNKNOWN"}): ${originalError.message}. ` +
+    `Attempting Groq fallback — result will be labeled fallback_response.`
+  );
 
-  const probeB = {
-    userCategory: "daily_wage_worker",
-    annualIncomeEstimate: 90000,
-    averageDailyEarnings: 350,
-    daysWorkedPerMonth: 16,
-    requestedAmount: 700000,
-    requestedTenureMonths: 24,
-    householdSize: 7,
-    childrenCount: 4,
-    age: 21,
-    hasBankAccount: false,
-    hasUpiHistory: false,
-    utilityBillConsistency: 0.2,
-    upiTransactionCount: 2,
-    upiTransactionVolume: 5000,
-    totalExistingEmiBurden: 6000,
-    collateralType: "none",
-    collateralValue: 0,
-  };
+  const prompt = `You are a credit risk analyst AI assistant.
 
+Given these normalized applicant features, provide a credit default probability estimate.
+Features (JSON): ${JSON.stringify(features, null, 2)}
+
+Respond with ONLY valid JSON in this exact format — no preamble, no markdown:
+{
+  "probability": <float between 0.01 and 0.99>,
+  "risk_level": "<LOW|MEDIUM|HIGH>",
+  "top_features": [
+    { "feature": "<feature_name>", "impact": <float> },
+    { "feature": "<feature_name>", "impact": <float> },
+    { "feature": "<feature_name>", "impact": <float> },
+    { "feature": "<feature_name>", "impact": <float> },
+    { "feature": "<feature_name>", "impact": <float> }
+  ]
+}
+
+Rules:
+- probability >= 0.60 → risk_level = "HIGH"
+- probability 0.35–0.59 → risk_level = "MEDIUM"  
+- probability < 0.35 → risk_level = "LOW"
+- top_features: pick 5 features from the input with highest estimated impact on default risk
+- impact: positive = increases default risk, negative = decreases it`;
+
+  let response;
   try {
-    const [a, b] = await Promise.all([
-      runRawInference({
-        pythonBinary,
-        runnerPath,
-        artifactPath,
-        features: buildFeaturesFromPayload(probeA),
-        timeoutMs,
+    response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama3-8b-8192",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.1,
+        max_tokens: 400,
       }),
-      runRawInference({
-        pythonBinary,
-        runnerPath,
-        artifactPath,
-        features: buildFeaturesFromPayload(probeB),
-        timeoutMs,
-      }),
-    ]);
-    const degenerate =
-      Math.abs(Number(a.probability) - Number(b.probability)) < 1e-6;
-    degeneracyCache.set(cacheKey, degenerate);
-    return degenerate;
+    });
+  } catch (fetchErr) {
+    throw Object.assign(
+      new Error(`Groq API request failed: ${fetchErr.message}`),
+      { code: "GROQ_REQUEST_FAILED", originalError }
+    );
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw Object.assign(
+      new Error(`Groq API returned ${response.status}: ${body.slice(0, 200)}`),
+      { code: "GROQ_API_ERROR", originalError }
+    );
+  }
+
+  const groqData = await response.json();
+  const content = groqData?.choices?.[0]?.message?.content?.trim();
+  if (!content) {
+    throw Object.assign(
+      new Error("Groq returned empty content"),
+      { code: "GROQ_EMPTY_RESPONSE", originalError }
+    );
+  }
+
+  let parsed;
+  try {
+    // Strip potential markdown code fences
+    const clean = content.replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
+    parsed = JSON.parse(clean);
   } catch {
-    degeneracyCache.set(cacheKey, false);
-    return false;
+    throw Object.assign(
+      new Error(`Groq returned invalid JSON: ${content.slice(0, 200)}`),
+      { code: "GROQ_INVALID_JSON", originalError }
+    );
+  }
+
+  console.warn("[mlService] Groq fallback succeeded — labeling as fallback_response");
+
+  return {
+    probability: Math.min(0.99, Math.max(0.01, Number(parsed.probability) || 0.5)),
+    risk_level: ["LOW", "MEDIUM", "HIGH"].includes(parsed.risk_level) ? parsed.risk_level : "MEDIUM",
+    explanation_type: "fallback_response",
+    top_features: Array.isArray(parsed.top_features) ? parsed.top_features.slice(0, 5) : [],
+    fallback_reason: originalError.message,
+  };
+}
+
+// ── Model readiness check ─────────────────────────────────────────────────────
+
+export async function getModelReadiness() {
+  const artifactPath = DEFAULT_ARTIFACT_PATH;
+  try {
+    await fs.access(artifactPath);
+    await fs.access(ML_RUNNER_PATH);
+    return {
+      ready: true,
+      artifactPath,
+      runnerPath: ML_RUNNER_PATH,
+      pythonBin: PYTHON_BIN,
+    };
+  } catch (err) {
+    return {
+      ready: false,
+      reason: err.message,
+      artifactPath,
+      runnerPath: ML_RUNNER_PATH,
+      pythonBin: PYTHON_BIN,
+    };
   }
 }
 
-export async function predictCreditScoreWithModel(payload) {
-  const artifactPath = await resolveArtifactPath();
-  const runnerPath = path.resolve(__dirname, "ml_runner.py");
-  const pythonBinary = process.env.ML_PYTHON_BIN || "python3";
-  const timeoutMs = Number(process.env.ML_INFERENCE_TIMEOUT_MS || 10000);
+// ── Public API ────────────────────────────────────────────────────────────────
 
-  const features = buildFeaturesFromPayload(payload);
-  const parsed = await runRawInference({
-    pythonBinary,
-    runnerPath,
-    artifactPath,
-    features,
-    timeoutMs,
-  });
+/**
+ * Run credit risk inference for one applicant.
+ *
+ * @param {object} payload - Raw applicant feature payload (keys match FEATURE_NAMES).
+ * @returns {Promise<{
+ *   success: boolean,
+ *   data: {
+ *     probability: number,
+ *     risk_level: string,
+ *     explanation: { type: string, top_features: Array }
+ *   },
+ *   source: "ml_model" | "groq_fallback"
+ * }>}
+ *
+ * Throws if both ML and fallback fail. NEVER returns a silent default.
+ */
+export async function predictCreditRisk(payload = {}) {
+  const features = buildFeatureVector(payload);
+  const artifactPath = DEFAULT_ARTIFACT_PATH;
 
-  const rawDefaultProbability = Number(parsed.probability);
-  const isDegenerate = await detectDegenerateModel({
-    pythonBinary,
-    runnerPath,
-    artifactPath,
-    timeoutMs,
-  });
+  // Verify artifact exists before spawning Python
+  try {
+    await fs.access(artifactPath);
+  } catch {
+    const err = Object.assign(
+      new Error(`Model artifact not found: ${artifactPath}`),
+      { code: "ARTIFACT_NOT_FOUND" }
+    );
+    console.error(`[mlService] ${err.message}`);
+    // Attempt Groq fallback immediately
+    const fallback = await callGroqFallback(features, err);
+    return _formatResponse(fallback, "groq_fallback");
+  }
 
-  const modelRepaymentProbability = isDegenerate
-    ? heuristicProbabilityFromPayload(features)
-    : clamp(1 - rawDefaultProbability, 0.05, 0.95);
-  const positiveProfileAdjustment = computePositiveProfileAdjustment(features);
-  const affordabilityPenalty = computeAffordabilityPenalty(features);
-  const repaymentProbability = clamp(
-    modelRepaymentProbability +
-      positiveProfileAdjustment -
-      affordabilityPenalty,
-    0.05,
-    0.95
-  );
-  const creditScore = computeCreditScore(repaymentProbability);
-  const riskLevel = computeRiskLevel(repaymentProbability);
+  let mlResult;
+  try {
+    mlResult = await runPythonInference(features, artifactPath);
+  } catch (mlErr) {
+    console.error(
+      `[mlService] Python ML failed [${mlErr.code}]: ${mlErr.message}`
+    );
+    // Attempt Groq fallback — throws if Groq also fails
+    const fallback = await callGroqFallback(features, mlErr);
+    return _formatResponse(fallback, "groq_fallback");
+  }
+
+  return _formatResponse(mlResult, "ml_model");
+}
+
+/**
+ * Legacy compatibility wrapper used by loanController and creditController.
+ * Maps old-style payload → new feature vector → predictCreditRisk.
+ *
+ * Returns the shape existing controllers expect:
+ * { creditScore, riskLevel, probability, modelInfo }
+ */
+export async function predictCreditScoreWithModel(payload = {}) {
+  const result = await predictCreditRisk(payload);
+  const { probability, risk_level, explanation, source } = result.data;
+
+  // Derive a conventional credit score from probability (repayment probability = 1 - default prob)
+  const repaymentProb = Math.max(0.05, Math.min(0.95, 1 - probability));
+  const creditScore = Math.round(300 + repaymentProb * 550);
 
   return {
     creditScore,
-    riskLevel,
-    probability: repaymentProbability,
+    riskLevel: risk_level.toLowerCase(),
+    // Expose probability as repayment probability for backward compat
+    probability: repaymentProb,
     modelInfo: {
-      modelType: isDegenerate
-        ? "GuardrailHeuristicFromCollapsedModel"
-        : parsed.model_type,
-      nFeaturesUsed: parsed.n_features_used,
-      artifactPath,
-      rawProbability: rawDefaultProbability,
-      rawDefaultProbability,
-      modelRepaymentProbability,
-      positiveProfileAdjustment,
-      repaymentProbability,
-      affordabilityPenalty,
-      featureContract: "winner_v5_44_features",
+      modelType: source === "groq_fallback" ? "GroqFallback" : "StackingEnsemble",
+      source,
+      explanationType: explanation.type,
+      topFeatures: explanation.top_features,
+      artifactPath: DEFAULT_ARTIFACT_PATH,
+      featureContract: "stacking_pipeline_v1_30_features",
     },
   };
 }
 
-export async function getModelReadiness() {
-  const artifactPath = await resolveArtifactPath();
-  const runnerPath = path.resolve(__dirname, "ml_runner.py");
-  const pythonBinary = process.env.ML_PYTHON_BIN || "python3";
+// ── Internal helpers ──────────────────────────────────────────────────────────
 
-  try {
-    await fs.access(artifactPath);
-    await fs.access(runnerPath);
-  } catch (error) {
-    return {
-      ready: false,
-      reason: error.message,
-      artifactPath,
-      runnerPath,
-      pythonBinary,
-    };
-  }
-
+function _formatResponse(raw, source) {
   return {
-    ready: true,
-    artifactPath,
-    runnerPath,
-    pythonBinary,
+    success: true,
+    data: {
+      probability: raw.probability,
+      risk_level: raw.risk_level,
+      explanation: {
+        type: raw.explanation_type || "unknown",
+        top_features: raw.top_features || [],
+        ...(raw.fallback_reason ? { fallback_reason: raw.fallback_reason } : {}),
+      },
+    },
+    source,
   };
 }

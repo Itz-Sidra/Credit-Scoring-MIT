@@ -10,7 +10,6 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    # Secrets live in backend/.env; Compose only reads ./.env for ${...} in this file.
     env_file:
       - ./backend/.env
     environment:
@@ -19,13 +18,14 @@ services:
       REDIS_URL: redis://redis:6379
       ML_PYTHON_BIN: python3
       ML_INFERENCE_TIMEOUT_MS: ${ML_INFERENCE_TIMEOUT_MS:-10000}
-      ML_MANIFEST_PATH: ${ML_MANIFEST_PATH:-models/integration_contracts/winner_upgrade_v5/winner_v5_serving_manifest.json}
-      ML_ARTIFACT_PATH: ${ML_ARTIFACT_PATH:-models/integration_contracts/winner_upgrade_v5/winner_v5_serving_artifact.pkl}
+      # UPDATED: point to the correct model artifact
+      ML_ARTIFACT_PATH: /app/models/new/stacking_pipeline.pkl
     depends_on:
       - redis
       - mongodb
-    expose:
-      - "8000"
+    ports:
+      - "8000:8000"          # <-- ADD THIS to access from host
+    # remove the "expose:" line entirely
 
   frontend:
     build:
