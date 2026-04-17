@@ -146,6 +146,12 @@ export function ApplyLoanPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [disableAutoSave, setDisableAutoSave] = useState(false);
+  const [prediction, setPrediction] = useState<{
+    probability?: number;
+    risk_level?: string;
+    data?: { probability?: number; risk_level?: string };
+  } | null>(null);
+  const [predictionLoading, setPredictionLoading] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
   const [assetsConfirmed, setAssetsConfirmed] = useState(false);
   const [finalConfirmed, setFinalConfirmed] = useState(false);
@@ -503,7 +509,15 @@ export function ApplyLoanPage() {
     if (applicantType === "unbanked") {
       const declared = Number(declaredMonthlyIncome || 0);
       const inflow = Number(upiMonthlyInflow || 0);
-      return Math.max(declared, inflow, 30000);
+      if (applicantType === "unbanked") {
+        const declared = Number(declaredMonthlyIncome || 0);
+        const inflow = Number(upiMonthlyInflow || 0);
+
+        if (declared > 0 && inflow > 0) {
+          return Math.max(declared, inflow);
+        }
+        return declared || inflow || 0;
+      }
     }
     if (incomeRange === "<2L") return 15000;
     if (incomeRange === "2-5L") return 30000;
@@ -514,18 +528,82 @@ export function ApplyLoanPage() {
 
   const assumedMonthlyIncome = getIncomeValue();
   const emiPercentage = (emi / assumedMonthlyIncome) * 100;
-
+  
   const getEmiRisk = () => {
-    if (applicantType !== "unbanked" && !incomeRange) {
-      return { text: "Select income to see risk", color: "text-gray-400", bg: "bg-gray-400/10" };
+  if (applicantType !== "unbanked" && !incomeRange) {
+    return {
+      text: "Select income to see risk",
+      color: "text-gray-400",
+      bg: "bg-gray-400/10",
+    };
+  }
+
+  if (applicantType === "unbanked" && !declaredMonthlyIncome && !upiMonthlyInflow) {
+    return {
+      text: "Enter declared income or UPI inflow to see risk",
+      color: "text-gray-400",
+      bg: "bg-gray-400/10",
+    };
+  }
+
+  // ✅ ML prediction
+  const prob =
+    prediction?.probability ??
+    prediction?.data?.probability;
+
+  if (prob !== undefined) {
+    if (prob < 0.3) {
+      return {
+        text: "Low Risk (ML)",
+        color: "text-green-400",
+        bg: "bg-green-400/10",
+      };
     }
-    if (applicantType === "unbanked" && !declaredMonthlyIncome && !upiMonthlyInflow) {
-      return { text: "Enter declared income or UPI inflow to see risk", color: "text-gray-400", bg: "bg-gray-400/10" };
+    if (prob < 0.6) {
+      return {
+        text: "Moderate Risk (ML)",
+        color: "text-yellow-400",
+        bg: "bg-yellow-400/10",
+      };
     }
-    if (emiPercentage < 30) return { text: "Comfortable (below 30%)", color: "text-green-400", bg: "bg-green-400/10" };
-    if (emiPercentage <= 40) return { text: "Manageable (30-40%)", color: "text-yellow-400", bg: "bg-yellow-400/10" };
-    return { text: "High risk (above 40%)", color: "text-red-400", bg: "bg-red-400/10" };
+    return {
+      text: "High Risk (ML)",
+      color: "text-red-400",
+      bg: "bg-red-400/10",
+    };
+  }
+
+  // ✅ fallback
+  if (!assumedMonthlyIncome || assumedMonthlyIncome === 0) {
+    return {
+      text: "Insufficient data",
+      color: "text-gray-400",
+      bg: "bg-gray-400/10",
+    };
+  }
+
+  if (emiPercentage < 30) {
+    return {
+      text: "Comfortable (heuristic)",
+      color: "text-green-400",
+      bg: "bg-green-400/10",
+    };
+  }
+
+  if (emiPercentage <= 40) {
+    return {
+      text: "Manageable (heuristic)",
+      color: "text-yellow-400",
+      bg: "bg-yellow-400/10",
+    };
+  }
+
+  return {
+    text: "High Risk (heuristic)",
+    color: "text-red-400",
+    bg: "bg-red-400/10",
   };
+};
 
   // Validation function for required fields
   const validateRequiredFields = () => {
@@ -674,7 +752,134 @@ export function ApplyLoanPage() {
     }
   };
 
+  // ADD this entire function before handleSubmit
+  const buildModelFeatures = () => {
+    // Parse income from incomeRange bracket OR declared monthly income
+    const getMonthlyIncome = () => {
+      if (applicantType === "unbanked") {
+        const declared = Number(declaredMonthlyIncome || 0);
+        const inflow = Number(upiMonthlyInflow || 0);
+        if (!declared && !inflow) return 0;
+        return Math.max(declared, inflow);
+      }
+      const map: Record<string, number> = {
+        "<2L": 12000,
+        "2-5L": 29000,
+        "5-10L": 58000,
+        ">10L": 100000,
+      };
+      return map[incomeRange] || 30000;
+    };
+
+    const income_monthly = getMonthlyIncome();
+    const income_log = Math.log(income_monthly + 1);
+    const income_decile = Math.min(10, Math.floor(income_monthly / 10000));
+    const ageNum = Number(age || 25);
+    const job_tenure_ratio = Math.min(1, ageNum / 10);
+    const new_job_flag = occupation === "Unemployed" ? 1 : 0;
+    const income_per_exp = income_monthly / Math.max(ageNum, 1);
+    const is_early_career = ageNum < 25 ? 1 : 0;
+    const is_single = maritalStatus === "single" ? 1 : 0;
+    const is_renter = 1;
+    const has_car = 0;
+    const young_single = is_single && is_early_career ? 1 : 0;
+    const renter_no_car = is_renter && !has_car ? 1 : 0;
+    const profession_woe =
+      occupation === "Unemployed" ? -0.2 :
+      occupation === "Student" ? -0.1 :
+      0.1;
+
+    const platform_trust_score =
+      applicantType === "banked" ? 0.7 : 0.4;
+    const state_woe = 0.05;
+    const emi_to_income_cs = Number(existingEmi || 0) / Math.max(income_monthly, 1);
+    const debt_to_income_cs = emi_to_income_cs * 1.5;
+    const avg_delay_days = 2;
+    const payment_stress_index = 0.6 * emi_to_income_cs + 0.4 * (avg_delay_days / 10);
+    const is_over_utilized = emi_to_income_cs > 0.5 ? 1 : 0;
+    const is_thin_file = applicantType === "unbanked" ? 1 : 0;
+    const hc_ext_source_mean = 0.5;
+    const hc_credit_to_income = 2.0;
+    const hc_annuity_to_income = emi_to_income_cs;
+    const hc_employed_years = ageNum;
+    const hc_install_late_ratio = avg_delay_days / 10;
+    const utility_payment_score = hasUtilityHint ? 0.8 : 0.4;
+    const transaction_consistency = hasUpiHint ? 0.7 : 0.4;
+    const has_bank_account = applicantType === "banked" ? 1 : 0;
+    const platform_tenure_score = 0.8;
+    const features = {
+      income_monthly,
+      income_log,
+      income_decile,
+      job_tenure_ratio,
+      new_job_flag,
+      income_per_exp,
+      is_early_career,
+      is_single,
+      is_renter,
+      has_car,
+      young_single,
+      renter_no_car,
+      profession_woe,
+      state_woe,
+      emi_to_income_cs,
+      debt_to_income_cs,
+      avg_delay_days,
+      payment_stress_index,
+      is_over_utilized,
+      is_thin_file,
+      hc_ext_source_mean,
+      hc_credit_to_income,
+      hc_annuity_to_income,
+      hc_employed_years,
+      hc_install_late_ratio,
+      utility_payment_score,
+      transaction_consistency,
+      has_bank_account,
+      platform_trust_score,
+      platform_tenure_score,
+    };
+
+    console.log("MODEL FEATURES:", features);
+
+    return features;
+    return {
+      income_monthly,
+      income_log,
+      income_decile,
+      job_tenure_ratio,
+      new_job_flag,
+      income_per_exp,
+      is_early_career,
+      is_single,
+      is_renter,
+      has_car,
+      young_single,
+      renter_no_car,
+      profession_woe,
+      state_woe,
+      emi_to_income_cs,
+      debt_to_income_cs,
+      avg_delay_days,
+      payment_stress_index,
+      is_over_utilized,
+      is_thin_file,
+      hc_ext_source_mean,
+      hc_credit_to_income,
+      hc_annuity_to_income,
+      hc_employed_years,
+      hc_install_late_ratio,
+      utility_payment_score,
+      transaction_consistency,
+      has_bank_account,
+      platform_trust_score,
+      platform_tenure_score,
+    };
+  };
+
   const handleSubmit = async () => {
+    
+
     // Validate required fields first
     const validationErrors = validateRequiredFields();
     if (validationErrors.length > 0) {
@@ -683,6 +888,27 @@ export function ApplyLoanPage() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
+
+    // --- ML PREDICTION CALL (additive, does not block submission) ---
+    setPredictionLoading(true);
+    setPrediction(null);
+    try {
+      const features = buildModelFeatures();
+      const predRes = await apiClient.post(
+        `${API_BASE_URL}/credit/predict`,
+        features
+      );
+      if (predRes.ok) {
+        const predData = await predRes.json();
+        // Backend may return { probability, riskLevel } or { data: { probability, risk_level } }
+        setPrediction(predData);
+      }
+    } catch (e) {
+      console.warn("Prediction call failed (non-blocking):", e);
+    } finally {
+      setPredictionLoading(false);
+    }
+    // --- END ML PREDICTION ---
 
     setIsSubmitting(true);
     setDisableAutoSave(true); // Disable auto-save during submission
@@ -903,6 +1129,8 @@ export function ApplyLoanPage() {
       setIsSubmitting(false);
     }
   };
+
+
 
   const nextStep = () => {
     let errors: string[] = [];
@@ -2591,6 +2819,85 @@ export function ApplyLoanPage() {
                 </div>
               </CardContent>
             </Card>
+            {/* ADD after the green "Application Snapshot" card */}
+            {(predictionLoading || prediction) && (
+              <div className={`border-[1.5px] border-black p-5 flex items-center gap-5 shadow-[4px_4px_0_0_rgba(0,0,0,1)] ${
+                predictionLoading
+                  ? "bg-slate-50"
+                  : (() => {
+                      const rl = (
+                        prediction?.risk_level ||
+                        prediction?.data?.risk_level ||
+                        ""
+                      ).toUpperCase();
+                      return rl === "LOW"
+                        ? "bg-green-50"
+                        : rl === "HIGH"
+                        ? "bg-red-50"
+                        : "bg-yellow-50";
+                    })()
+              }`}>
+                {predictionLoading ? (
+                  <>
+                    <div className="w-5 h-5 border-[2px] border-black border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-black/60">
+                      RUNNING ML RISK ASSESSMENT…
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className={`w-3 h-3 flex-shrink-0 ${
+                      (() => {
+                        const rl = (
+                          prediction?.risk_level ||
+                          prediction?.data?.risk_level ||
+                          ""
+                        ).toUpperCase();
+                        return rl === "LOW"
+                          ? "bg-green-600"
+                          : rl === "HIGH"
+                          ? "bg-red-600"
+                          : "bg-yellow-500";
+                      })()
+                    }`} />
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.2em] text-black">
+                        ML RISK ASSESSMENT
+                      </p>
+                      <p className={`text-base font-black uppercase tracking-tight mt-0.5 ${
+                        (() => {
+                          const rl = (
+                            prediction?.risk_level ||
+                            prediction?.data?.risk_level ||
+                            ""
+                          ).toUpperCase();
+                          return rl === "LOW"
+                            ? "text-green-700"
+                            : rl === "HIGH"
+                            ? "text-red-700"
+                            : "text-yellow-700";
+                        })()
+                      }`}>
+                        {(
+                          prediction?.risk_level ||
+                          prediction?.data?.risk_level ||
+                          "MEDIUM"
+                        ).toUpperCase()}{" "}
+                        RISK —{" "}
+                        {(
+                          (prediction?.probability != null
+                            ? prediction.probability
+                            : prediction?.data?.probability != null
+                            ? prediction.data.probability
+                            : 0.5) * 100
+                        ).toFixed(1)}
+                        % DEFAULT PROBABILITY
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             <div className="flex justify-between items-center pt-8 border-t-[1.5px] border-black">
               <Button variant="ghost" onClick={prevStep} className="border-[1.5px] border-black text-black hover:bg-gray-100 rounded-none font-black text-xs uppercase tracking-[0.15em] px-6 py-3" disabled={isSubmitting}>EDIT DETAILS</Button>

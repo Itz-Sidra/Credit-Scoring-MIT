@@ -26,11 +26,8 @@ const BACKEND_ROOT   = path.resolve(__dirname, "..", "..");
 const ML_RUNNER_PATH = path.resolve(__dirname, "ml_runner.py");
 
 // Support both legacy artifact and new stacking_pipeline
-const DEFAULT_ARTIFACT_PATH = path.resolve(
-  BACKEND_ROOT,
-  "model_inference",
-  "stacking_pipeline.pkl"
-);
+const DEFAULT_ARTIFACT_PATH =
+  process.env.ML_ARTIFACT_PATH || "/app/models/new/stacking_pipeline.pkl";
 
 // ── Feature list (must match ml_runner.py FEATURE_NAMES exactly) ─────────────
 
@@ -292,7 +289,7 @@ Rules:
         "Authorization": `Bearer ${GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "llama3-8b-8192",
+        model: "llama3-70b-8192",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.1,
         max_tokens: 400,

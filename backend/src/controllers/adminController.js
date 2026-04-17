@@ -22,6 +22,7 @@ import {
   probabilityOfDefaultFromBlendedScore,
   riskLevelFromBlendedScore,
 } from "../utils/alternateDisplayAlignment.js";
+import { predictCreditScoreWithModel } from "../services/mlService.js";
 
 const VALID_RISK_LEVELS = ["low", "medium", "high"];
 const VALID_PRE_SCREEN = ["pass", "review", "reject"];
@@ -528,6 +529,77 @@ export const getLoanExplainabilityForAdmin = async (req, res) => {
       }
     }
 
+    // ── Live ML re-run for SHAP explainability ─────────────────────────────
+    let mlShap = null;
+    const storedFeatures = loan.features?.modelFeatures;
+
+    if (storedFeatures && typeof storedFeatures === "object") {
+      try {
+        console.log(
+          `[explainability] Re-running ML for loan ${loanId} to generate SHAP...`
+        );
+        const mlResult = await predictCreditScoreWithModel(storedFeatures);
+
+        // predictCreditScoreWithModel wraps mlService which exposes topFeatures
+        // via modelInfo.topFeatures (from the raw Python runner output).
+        const rawTopFeatures =
+          mlResult?.modelInfo?.topFeatures ||
+          mlResult?.topFeatures ||
+          null;
+
+        if (Array.isArray(rawTopFeatures) && rawTopFeatures.length > 0) {
+          const shap = rawTopFeatures.map((f) => ({
+            name: f.feature ?? f.name ?? "unknown",
+            shapValue: f.impact ?? f.shapValue ?? 0,
+          }));
+
+          console.log("ML SHAP RESULT:", shap);
+
+          mlShap = {
+            topFeatures: shap,
+            method: "shap_tree",
+          };
+        } else {
+          console.warn(
+            `[explainability] ML ran but returned no top_features for loan ${loanId}`
+          );
+        }
+      } catch (mlErr) {
+        // Non-fatal — explainability still returns stored data
+        console.warn(
+          `[explainability] ML re-run failed for loan ${loanId}: ${mlErr.message}`
+        );
+      }
+    } else {
+      console.warn(
+        `[explainability] No stored modelFeatures for loan ${loanId} — skipping ML re-run`
+      );
+    }
+    // ── End SHAP block ──────────────────────────────────────────────────────
+
+    // Build the alternate block (used by unbanked AND now carries mlShap for
+    // banked loans so the frontend SHAP chart always has data when available).
+    const alternateBlock =
+      loan.applicantType === "unbanked"
+        ? {
+            referenceId: loan.alternateReferenceId || null,
+            scoringMethod: loan.alternateUnderwriting?.scoringMethod || null,
+            adminAttached: loan.alternateUnderwriting?.adminAttached || null,
+            explanationMetadata:
+              loan.alternateUnderwriting?.explanationMetadata || null,
+            mlShap:
+              // Prefer the live re-run; fall back to any shap stored in the
+              // alternate underwriting block (for previously-scored unbanked loans).
+              mlShap ||
+              loan.alternateUnderwriting?.explanationMetadata?.shap ||
+              null,
+          }
+        : {
+            // For banked loans we still expose mlShap so the admin panel can
+            // render the SHAP bar chart without any frontend changes.
+            mlShap: mlShap || null,
+          };
+
     return res.status(200).json({
       loanId: loan._id,
       loanType: loan.loanType,
@@ -541,17 +613,7 @@ export const getLoanExplainabilityForAdmin = async (req, res) => {
           loan.aiAnalysis?.shapFactors?.explanationSummary || [],
         flags: loan.aiAnalysis?.amlFlags || [],
         decisionSummary,
-        alternate:
-          loan.applicantType === "unbanked"
-            ? {
-                referenceId: loan.alternateReferenceId || null,
-                scoringMethod: loan.alternateUnderwriting?.scoringMethod || null,
-                adminAttached: loan.alternateUnderwriting?.adminAttached || null,
-                explanationMetadata:
-                  loan.alternateUnderwriting?.explanationMetadata || null,
-                mlShap: loan.alternateUnderwriting?.explanationMetadata?.shap || null,
-              }
-            : null,
+        alternate: alternateBlock,
       },
       applicant: {
         id: loan.userId?._id || null,

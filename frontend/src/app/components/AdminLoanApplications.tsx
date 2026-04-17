@@ -7,6 +7,72 @@ import { apiClient } from "../services/apiClient";
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000/api';
 
+// ─── ADD these helpers above the component (or in a utils file) ───────────────
+
+const SHAP_LABEL_MAP: Record<string, string> = {
+  income_monthly: "Monthly income",
+  income_log: "Income level",
+  income_decile: "Income decile",
+  income_per_exp: "Income vs experience",
+  hc_ext_source_mean: "External credit score",
+  emi_to_income_cs: "EMI burden",
+  debt_to_income_cs: "Debt-to-income ratio",
+  avg_delay_days: "Payment delay history",
+  hc_install_late_ratio: "Late instalment rate",
+  payment_stress_index: "Repayment stress index",
+  job_tenure_ratio: "Job tenure",
+  hc_employed_years: "Employment duration",
+  transaction_consistency: "Transaction consistency",
+  platform_trust_score: "Platform trust score",
+  platform_tenure_score: "Account longevity",
+  new_job_flag: "Recent job change",
+  is_early_career: "Early career",
+  is_thin_file: "Thin credit file",
+  has_bank_account: "Bank account present",
+  utility_payment_score: "Utility payment record",
+  is_over_utilized: "Credit overutilized",
+  hc_credit_to_income: "Credit-to-income ratio",
+  hc_annuity_to_income: "Annuity-to-income ratio",
+  is_single: "Single applicant",
+  is_renter: "Renter status",
+  renter_no_car: "Renter without vehicle",
+  young_single: "Young single flag",
+  has_car: "Vehicle ownership",
+  profession_woe: "Profession risk weight",
+  state_woe: "Geographic risk weight",
+};
+
+const SHAP_GROUPS: Record<string, string[]> = {
+  "Income strength": ["income_monthly", "income_log", "income_decile", "income_per_exp"],
+  "Credit behavior": ["avg_delay_days", "emi_to_income_cs", "debt_to_income_cs", "hc_install_late_ratio", "payment_stress_index"],
+  "Stability": ["job_tenure_ratio", "hc_employed_years", "transaction_consistency", "platform_trust_score", "platform_tenure_score"],
+};
+
+function getShapLabel(name: string): string {
+  return SHAP_LABEL_MAP[name] ?? name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function generateShapSummary(features: Array<{ name: string; shapValue: number }>): string {
+  const pos = features.filter((f) => f.shapValue > 0).reduce((s, f) => s + Math.abs(f.shapValue), 0);
+  const neg = features.filter((f) => f.shapValue < 0).reduce((s, f) => s + Math.abs(f.shapValue), 0);
+  const ratio = pos / Math.max(pos + neg, 0.001);
+  if (ratio < 0.35) return "Low risk driven by strong income, credit history, and payment stability.";
+  if (ratio > 0.65) return "Higher risk due to repayment stress, payment delays, and credit utilisation.";
+  return "Balanced profile — positive signals in income and consistency offset by repayment stress indicators.";
+}
+
+function computeShapGroups(features: Array<{ name: string; shapValue: number }>) {
+  const featureMap: Record<string, number> = {};
+  features.forEach((f) => { featureMap[f.name] = f.shapValue; });
+  return Object.entries(SHAP_GROUPS).map(([label, keys]) => {
+    const vals = keys.filter((k) => k in featureMap).map((k) => featureMap[k]);
+    if (!vals.length) return null;
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    return { label, avg };
+  }).filter(Boolean) as Array<{ label: string; avg: number }>;
+}
+
+
 /** Matches backend alternateDisplayAlignment: PD ↔ headline blended score */
 function alternatePdFromBlendedCreditScore(score: number): number {
   const s = Number(score);
@@ -976,26 +1042,111 @@ export function AdminLoanApplications() {
                         )}
                       </div>
                     )}
-                    {explainability.alternate?.mlShap?.topFeatures?.length > 0 && (
-                      <div className="pt-3 border-t border-white/15">
-                        <p className="text-[11px] font-semibold text-blue-200 mb-2 uppercase tracking-widest">
-                          Alternate model (SHAP)
-                        </p>
-                        <ul className="space-y-1 max-h-40 overflow-y-auto">
-                          {explainability.alternate.mlShap.topFeatures.map(
-                            (row: { name: string; shapValue: number }, idx: number) => (
-                              <li
-                                key={idx}
-                                className="text-[11px] text-white/90 flex justify-between gap-2"
-                              >
-                                <span className="truncate">{row.name}</span>
-                                <span className="font-mono shrink-0">{row.shapValue}</span>
-                              </li>
-                            )
+                    {/* ── SHAP block — replaces simple list ───────────────────────────── */}
+                    {explainability.alternate?.mlShap?.topFeatures?.length > 0 && (() => {
+                      const rawFeatures: Array<{ name: string; shapValue: number }> =
+                        explainability.alternate.mlShap.topFeatures;
+
+                      const sorted = [...rawFeatures]
+                        .sort((a, b) => Math.abs(b.shapValue) - Math.abs(a.shapValue))
+                        .slice(0, 5);
+
+                      const maxAbs = Math.max(...sorted.map((f) => Math.abs(f.shapValue)), 0.001);
+                      const summary = generateShapSummary(rawFeatures);
+                      const groups = computeShapGroups(rawFeatures);
+
+                      return (
+                        <div className="pt-3 border-t border-white/15 space-y-3">
+
+                          {/* Section label */}
+                          <p className="text-[10px] font-black uppercase tracking-widest text-white/50">
+                            Model explanation (shap)
+                          </p>
+
+                          {/* English summary */}
+                          <p className="text-[11px] text-white/80 leading-relaxed bg-white/5 border border-white/10 px-3 py-2">
+                            {summary}
+                          </p>
+
+                          {/* Risk group tags */}
+                          {groups.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {groups.map((g) => {
+                                const isGood = g.avg < 0;
+                                return (
+                                  <div
+                                    key={g.label}
+                                    className={`flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide px-2.5 py-1 border ${
+                                      isGood
+                                        ? "bg-green-500/10 border-green-500/25 text-green-400"
+                                        : "bg-red-500/10 border-red-500/25 text-red-400"
+                                    }`}
+                                  >
+                                    <div
+                                      className={`w-1.5 h-1.5 rounded-full ${
+                                        isGood ? "bg-green-400" : "bg-red-400"
+                                      }`}
+                                    />
+                                    {g.label}
+                                    <span className="opacity-70 ml-0.5">{isGood ? "good" : "risk"}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           )}
-                        </ul>
-                      </div>
-                    )}
+
+                          {/* Horizontal bar chart */}
+                          <div className="space-y-2 pt-1">
+                            {sorted.map((f, idx) => {
+                              const pct = Math.min(100, (Math.abs(f.shapValue) / maxAbs) * 100);
+                              const isPos = f.shapValue > 0;
+                              return (
+                                <div key={idx} className="flex items-center gap-2">
+                                  {/* Label */}
+                                  <div
+                                    className="text-[10px] text-white/70 truncate"
+                                    style={{ minWidth: "120px", maxWidth: "120px" }}
+                                    title={getShapLabel(f.name)}
+                                  >
+                                    {getShapLabel(f.name)}
+                                  </div>
+                                  {/* Bar track */}
+                                  <div className="flex-1 h-[7px] bg-white/10 rounded-sm overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-sm transition-all duration-300 ${
+                                        isPos ? "bg-red-500" : "bg-green-500"
+                                      }`}
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                  {/* Value */}
+                                  <div
+                                    className={`text-[10px] font-black tabular-nums w-10 text-right ${
+                                      isPos ? "text-red-400" : "text-green-400"
+                                    }`}
+                                  >
+                                    {isPos ? "+" : ""}
+                                    {f.shapValue.toFixed(2)}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Legend */}
+                          <div className="flex gap-4 pt-1">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-2.5 h-2.5 rounded-sm bg-green-500" />
+                              <span className="text-[10px] text-white/40">Reduces risk</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-2.5 h-2.5 rounded-sm bg-red-500" />
+                              <span className="text-[10px] text-white/40">Increases risk</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {Array.isArray(explainability.flags) && explainability.flags.length > 0 && (
                       <div className="pt-3 border-t border-white/15">
                         <p className="text-[11px] font-semibold text-white/80 mb-2 uppercase tracking-widest">Risk Flags</p>
