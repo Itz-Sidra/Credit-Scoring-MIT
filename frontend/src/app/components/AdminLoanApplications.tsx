@@ -4,6 +4,8 @@ import { Button } from "./ui/button";
 import { useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { apiClient } from "../services/apiClient";
+import { GeminiExplainabilityPanel } from "./GeminiExplainabilityPanel";
+
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000/api';
 
@@ -383,21 +385,23 @@ export function AdminLoanApplications() {
   };
 
   const fetchExplainability = async (loanId: string) => {
-    try {
-      setExplainabilityLoading(true);
-      const response = await apiClient.get(`${API_BASE_URL}/admin/loans/${loanId}/explainability`);
-      if (!response.ok) {
-        setExplainability(null);
-        return;
-      }
-      const data = await response.json();
-      setExplainability(data.explainability || null);
-    } catch (error) {
+  try {
+    setExplainabilityLoading(true);
+    const response = await apiClient.get(`${API_BASE_URL}/admin/loans/${loanId}/explainability`);
+    if (!response.ok) {
       setExplainability(null);
-    } finally {
-      setExplainabilityLoading(false);
+      return;
     }
-  };
+    const data = await response.json();
+    // The backend now returns gemini_explanation in the response
+    setExplainability(data.explainability || null);
+  } catch (error) {
+    console.error('Error fetching explainability:', error);
+    setExplainability(null);
+  } finally {
+    setExplainabilityLoading(false);
+  }
+};
 
   // Handle loan row click - fetch fresh details by ID
   const handleLoanClick = async (index: number, loanId: string) => {
@@ -547,93 +551,7 @@ export function AdminLoanApplications() {
     }
   };
 
-  const buildExplainabilityNarrative = (loan: any, explainability: any) => {
-    if (!loan || !explainability) return null;
-
-    // If backend already provided an LLM-generated narrative, use it directly.
-    if (explainability.llmNarrative) {
-      const n = explainability.llmNarrative;
-      if (Array.isArray(n.key_factors) && typeof n.detailed_explanation === "string") {
-        return {
-          keyFactors: n.key_factors,
-          detailedExplanation: n.detailed_explanation,
-        };
-      }
-    }
-
-    const factors: string[] = [];
-
-    const pd = typeof explainability.probabilityOfDefault === "number"
-      ? explainability.probabilityOfDefault
-      : null;
-    const flags: string[] = Array.isArray(explainability.flags)
-      ? explainability.flags
-      : [];
-
-    const rawBorrowerType: string | undefined =
-      loan.rawLoan?.features?.borrowerType ||
-      (Array.isArray(explainability.explanationSummary)
-        ? (explainability.explanationSummary.find((item: string) =>
-            typeof item === "string" && item.includes("borrowerType=")) as string | undefined)
-        : undefined);
-
-    let borrowerLabel: string | null = null;
-    if (rawBorrowerType) {
-      const match = rawBorrowerType.match(/borrowerType=([a-zA-Z0-9_]+)/);
-      const code = (match?.[1] || rawBorrowerType).toLowerCase();
-      if (code === "low_income_salaried") {
-        borrowerLabel = "low-income salaried individual";
-      } else if (code === "salaried") {
-        borrowerLabel = "salaried individual";
-      } else if (code === "self_employed") {
-        borrowerLabel = "self-employed borrower";
-      }
-    }
-
-    if (borrowerLabel) {
-      factors.push(
-        `The applicant appears to be a ${borrowerLabel}, which generally leaves limited surplus cash each month after regular living expenses.`
-      );
-    }
-
-    if (loan.loanAmount) {
-      factors.push(
-        "The requested loan amount is sizeable for this income segment, increasing the monthly repayment burden relative to earnings."
-      );
-    }
-
-    if (pd !== null) {
-      factors.push(
-        "Repayment capacity looks tight, so even modest income disruptions or unexpected expenses could make it difficult to keep up with EMIs."
-      );
-    }
-
-    if (flags.includes("identity_unverified")) {
-      factors.push(
-        "Identity verification checks are not fully clear, adding operational and compliance risk on top of affordability concerns."
-      );
-    }
-
-    if (factors.length === 0) {
-      factors.push(
-        "Available information suggests constrained repayment capacity and limited financial buffer, so the application should be treated cautiously."
-      );
-    }
-
-    const detailedExplanation =
-      "Taken together, these factors point to a borrower with constrained financial flexibility. " +
-      (borrowerLabel
-        ? `As a ${borrowerLabel}, the applicant is likely operating on a tight monthly budget, so loan repayments would consume a meaningful share of income. `
-        : "Repayments would take up a meaningful share of the applicant's income. ") +
-      (loan.loanAmount
-        ? "The size of the requested loan further increases this burden, leaving less room to absorb shocks such as medical costs or employment changes. "
-        : "This leaves limited room to absorb shocks such as medical costs or employment changes. ") +
-      (flags.includes("identity_unverified")
-        ? "In addition, unresolved identity verification issues introduce extra non-financial risk that should be resolved before approving the loan."
-        : "Given these points, the case warrants careful manual review before any approval decision.");
-
-    return { keyFactors: factors, detailedExplanation };
-  };
+  
 
   const handleApprove = () => {
     if (selectedLoan !== null && loans[selectedLoan]) {
@@ -1042,110 +960,23 @@ export function AdminLoanApplications() {
                       </div>
                     )}
                     {/* ── SHAP block — replaces simple list ───────────────────────────── */}
-                    {explainability.alternate?.mlShap?.topFeatures?.length > 0 && (() => {
-                      const rawFeatures: Array<{ name: string; shapValue: number }> =
-                        explainability.alternate.mlShap.topFeatures;
+                    {/* Gemini Explainability Panel */}
+{explainability && (
+  <GeminiExplainabilityPanel
+    loan={loan}
+    explainability={explainability}
+    geminiExplanation={explainability.geminiExplanation || explainability.gemini_explanation || null}
+  />
+)}
 
-                      const sorted = [...rawFeatures]
-                        .sort((a, b) => Math.abs(b.shapValue) - Math.abs(a.shapValue))
-                        .slice(0, 5);
-
-                      const maxAbs = Math.max(...sorted.map((f) => Math.abs(f.shapValue)), 0.001);
-                      const summary = generateShapSummary(rawFeatures);
-                      const groups = computeShapGroups(rawFeatures);
-
-                      return (
-                        <div className="pt-3 border-t border-white/15 space-y-3">
-
-                          {/* Section label */}
-                          <p className="text-[10px] font-black uppercase tracking-widest text-white/50">
-                            Model explanation (shap)
-                          </p>
-
-                          {/* English summary */}
-                          <p className="text-[11px] text-white/80 leading-relaxed bg-white/5 border border-white/10 px-3 py-2">
-                            {summary}
-                          </p>
-
-                          {/* Risk group tags */}
-                          {groups.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                              {groups.map((g) => {
-                                const isGood = g.avg < 0;
-                                return (
-                                  <div
-                                    key={g.label}
-                                    className={`flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide px-2.5 py-1 border ${
-                                      isGood
-                                        ? "bg-green-500/10 border-green-500/25 text-green-400"
-                                        : "bg-red-500/10 border-red-500/25 text-red-400"
-                                    }`}
-                                  >
-                                    <div
-                                      className={`w-1.5 h-1.5 rounded-full ${
-                                        isGood ? "bg-green-400" : "bg-red-400"
-                                      }`}
-                                    />
-                                    {g.label}
-                                    <span className="opacity-70 ml-0.5">{isGood ? "good" : "risk"}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-
-                          {/* Horizontal bar chart */}
-                          <div className="space-y-2 pt-1">
-                            {sorted.map((f, idx) => {
-                              const pct = Math.min(100, (Math.abs(f.shapValue) / maxAbs) * 100);
-                              const isPos = f.shapValue > 0;
-                              return (
-                                <div key={idx} className="flex items-center gap-2">
-                                  {/* Label */}
-                                  <div
-                                    className="text-[10px] text-white/70 truncate"
-                                    style={{ minWidth: "120px", maxWidth: "120px" }}
-                                    title={getShapLabel(f.name)}
-                                  >
-                                    {getShapLabel(f.name)}
-                                  </div>
-                                  {/* Bar track */}
-                                  <div className="flex-1 h-[7px] bg-white/10 rounded-sm overflow-hidden">
-                                    <div
-                                      className={`h-full rounded-sm transition-all duration-300 ${
-                                        isPos ? "bg-red-500" : "bg-green-500"
-                                      }`}
-                                      style={{ width: `${pct}%` }}
-                                    />
-                                  </div>
-                                  {/* Value */}
-                                  <div
-                                    className={`text-[10px] font-black tabular-nums w-10 text-right ${
-                                      isPos ? "text-red-400" : "text-green-400"
-                                    }`}
-                                  >
-                                    {isPos ? "+" : ""}
-                                    {f.shapValue.toFixed(2)}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* Legend */}
-                          <div className="flex gap-4 pt-1">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-2.5 h-2.5 rounded-sm bg-green-500" />
-                              <span className="text-[10px] text-white/40">Reduces risk</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-2.5 h-2.5 rounded-sm bg-red-500" />
-                              <span className="text-[10px] text-white/40">Increases risk</span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
+{/* Fallback SHAP block if Gemini panel not used - but Gemini panel handles fallback internally */}
+{!explainability && (
+  <div className="pt-3 border-t border-white/15">
+    <p className="text-[10px] font-black uppercase tracking-widest text-white/50">
+      No explanation data available
+    </p>
+  </div>
+)}
                     {Array.isArray(explainability.flags) && explainability.flags.length > 0 && (
                       <div className="pt-3 border-t border-white/15">
                         <p className="text-[11px] font-semibold text-white/80 mb-2 uppercase tracking-widest">Risk Flags</p>
@@ -1159,24 +990,118 @@ export function AdminLoanApplications() {
                       </div>
                     )}
                     {(() => {
-                      const narrative = buildExplainabilityNarrative(loan, explainability);
-                      if (!narrative) return null;
-                      return (
-                        <div className="pt-2 space-y-3">
-                          <p className="text-[10px] font-black uppercase text-white/50 tracking-widest mb-1 border-l-2 border-blue-500 pl-2">Key Reasoning Factors</p>
-                          <ul className="space-y-2">
-                            {narrative.keyFactors.map((item: string, idx: number) => (
-                              <li key={idx} className="text-xs text-white font-medium bg-white/5 p-2 border-[1.5px] border-white/10">
-                                {item}
-                              </li>
-                            ))}
-                          </ul>
-                          <p className="text-[11px] text-white/80 leading-relaxed">
-                            {narrative.detailedExplanation}
-                          </p>
-                        </div>
-                      );
-                    })()}
+  const bullets: string[] | null = explainability?.geminiExplanation ?? null;
+  const socialScore: number | null = explainability?.socialScore ?? null;
+
+  // Nothing to show if Gemini hasn't responded and no social score available
+  if (!bullets && socialScore === null) return null;
+
+  const isGeminiBacked = Array.isArray(bullets) && bullets.length >= 2;
+
+  // Fallback bullets derived from live explainability data — no hardcoded strings
+  const fallbackBullets: string[] = (() => {
+    const pd      = typeof explainability?.probabilityOfDefault === "number"
+      ? explainability.probabilityOfDefault
+      : null;
+    const risk    = (explainability?.riskLevel || loan?.riskLevel || "medium").toLowerCase();
+    const score   = explainability?.creditScore ?? loan?.riskScore ?? null;
+    const lines: string[] = [];
+
+    if (pd !== null) {
+      const defaultPct = (pd * 100).toFixed(1);
+      lines.push(
+        pd < 0.25
+          ? `Default probability of ${defaultPct}% indicates low repayment risk.`
+          : pd < 0.50
+          ? `Default probability of ${defaultPct}% signals moderate repayment concern.`
+          : `Elevated default probability of ${defaultPct}% flags significant repayment risk.`
+      );
+    }
+
+    if (socialScore !== null) {
+      lines.push(
+        socialScore >= 65
+          ? `Social trust score of ${socialScore}/100 positively supports the blended credit decision.`
+          : socialScore >= 40
+          ? `Social trust score of ${socialScore}/100 has a neutral effect on the final score.`
+          : `Low social trust score (${socialScore}/100) indicates limited digital financial presence.`
+      );
+    }
+
+    if (score !== null) {
+      const riskLabel = risk === "low" ? "low" : risk === "medium" ? "medium" : "high";
+      lines.push(`Credit score of ${score} places this applicant in the ${riskLabel} risk band.`);
+    }
+
+    lines.push(
+      risk === "low"
+        ? "Low risk profile supports expedited approval consideration."
+        : risk === "medium"
+        ? "Medium risk band warrants manual review before final approval."
+        : "High risk band requires enhanced due diligence before any decision."
+    );
+
+    return lines;
+  })();
+
+  const displayBullets = isGeminiBacked ? bullets : fallbackBullets;
+
+  const riskColor =
+    (explainability?.riskLevel || loan?.riskLevel || "medium").toLowerCase() === "low"
+      ? "#4ade80"
+      : (explainability?.riskLevel || loan?.riskLevel || "medium").toLowerCase() === "high"
+      ? "#f87171"
+      : "#fbbf24";
+
+  return (
+    <div className="pt-3 border-t border-white/15 space-y-3">
+      {/* Header row */}
+      <div className="flex items-center gap-2">
+        <p className="text-[10px] font-black uppercase text-white/50 tracking-widest">
+          AI decision reasoning
+        </p>
+        <span
+          className="text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-sm"
+          style={{
+            background: isGeminiBacked ? "rgba(96,165,250,0.15)" : "rgba(251,191,36,0.15)",
+            color:      isGeminiBacked ? "#60a5fa"               : "#fbbf24",
+          }}
+        >
+          {isGeminiBacked ? "GEMINI" : "RULE-BASED"}
+        </span>
+        {socialScore !== null && (
+          <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-white/5 text-white/40">
+            social {socialScore}/100
+          </span>
+        )}
+      </div>
+
+      {/* Bullet list */}
+      <div className="flex flex-col gap-2">
+        {displayBullets.map((bullet: string, idx: number) => (
+          <div
+            key={idx}
+            className="flex gap-2.5 p-2.5 rounded-sm"
+            style={{
+              background:  "rgba(255,255,255,0.04)",
+              borderLeft:  `2px solid ${idx === 0 ? riskColor : "rgba(255,255,255,0.1)"}`,
+            }}
+          >
+            <span
+              className="text-[10px] font-black mt-0.5 flex-shrink-0"
+              style={{ color: riskColor }}
+            >
+              {idx + 1}.
+            </span>
+            <span className="text-[11px] text-white/80 leading-relaxed font-normal">
+              {bullet}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+})()}
                   </div>
                 ) : (
                   <p className="text-xs font-bold text-white/50 uppercase tracking-widest">Explainability unavailable.</p>

@@ -23,6 +23,7 @@ import {
   riskLevelFromBlendedScore,
 } from "../utils/alternateDisplayAlignment.js";
 import { predictCreditScoreWithModel } from "../services/mlService.js";
+import { generateLoanExplanation  } from "../services/geminiService.js";
 
 const VALID_RISK_LEVELS = ["low", "medium", "high"];
 const VALID_PRE_SCREEN = ["pass", "review", "reject"];
@@ -498,74 +499,65 @@ export const getLoanExplainabilityForAdmin = async (req, res) => {
   try {
     const { loanId } = req.params;
     const admin = await User.findById(req.user._id);
-
+ 
     if (!admin || admin.role !== "admin") {
       return res.status(403).json({ message: "Admin access only" });
     }
-
+ 
     const loan = await LoanApplication.findById(loanId)
       .populate("userId", "fullName email phone creditScore")
       .populate("adminDecision.adminId", "fullName email");
-
+ 
     if (!loan) {
       return res.status(404).json({ message: "Loan not found" });
     }
-
+ 
     if (admin.adminLoanType && loan.loanType !== admin.adminLoanType) {
       return res
         .status(403)
         .json({ message: "Not authorized to view this loan type" });
     }
-
+ 
     const decisionSummary = attachDecisionSummary(loan).decisionSummary;
-
-    let explainPd = loan.features?.probabilityOfDefault ?? null;
-    let explainRisk = loan.aiAnalysis?.riskLevel || null;
+ 
+    let explainPd    = loan.features?.probabilityOfDefault ?? null;
+    let explainRisk  = loan.aiAnalysis?.riskLevel || null;
     if (loan.applicantType === "unbanked" && loan.aiAnalysis?.creditScore != null) {
       const cs = Number(loan.aiAnalysis.creditScore);
       if (Number.isFinite(cs)) {
-        explainPd = probabilityOfDefaultFromBlendedScore(cs);
+        explainPd   = probabilityOfDefaultFromBlendedScore(cs);
         explainRisk = riskLevelFromBlendedScore(cs);
       }
     }
-
+ 
     // ── Live ML re-run for SHAP explainability ─────────────────────────────
     let mlShap = null;
     const storedFeatures = loan.features?.modelFeatures;
-
+ 
     if (storedFeatures && typeof storedFeatures === "object") {
       try {
         console.log(
           `[explainability] Re-running ML for loan ${loanId} to generate SHAP...`
         );
         const mlResult = await predictCreditScoreWithModel(storedFeatures);
-
-        // predictCreditScoreWithModel wraps mlService which exposes topFeatures
-        // via modelInfo.topFeatures (from the raw Python runner output).
         const rawTopFeatures =
           mlResult?.modelInfo?.topFeatures ||
           mlResult?.topFeatures ||
           null;
-
+ 
         if (Array.isArray(rawTopFeatures) && rawTopFeatures.length > 0) {
           const shap = rawTopFeatures.map((f) => ({
-            name: f.feature ?? f.name ?? "unknown",
-            shapValue: f.impact ?? f.shapValue ?? 0,
+            name:      f.feature ?? f.name ?? "unknown",
+            shapValue: f.impact  ?? f.shapValue ?? 0,
           }));
-
           console.log("ML SHAP RESULT:", shap);
-
-          mlShap = {
-            topFeatures: shap,
-            method: "shap_tree",
-          };
+          mlShap = { topFeatures: shap, method: "shap_tree" };
         } else {
           console.warn(
             `[explainability] ML ran but returned no top_features for loan ${loanId}`
           );
         }
       } catch (mlErr) {
-        // Non-fatal — explainability still returns stored data
         console.warn(
           `[explainability] ML re-run failed for loan ${loanId}: ${mlErr.message}`
         );
@@ -577,55 +569,117 @@ export const getLoanExplainabilityForAdmin = async (req, res) => {
     }
     // ── End SHAP block ──────────────────────────────────────────────────────
 
-    // Build the alternate block (used by unbanked AND now carries mlShap for
-    // banked loans so the frontend SHAP chart always has data when available).
+    // ── Resolve social score ────────────────────────────────────────────────
+    // Priority:
+    //   1. loan.features.socialScore  — persisted by loanController (new)
+    //   2. loan.aiAnalysis.socialScore — mirror field (new)
+    //   3. Derive from creditScore as a rough proxy (legacy loans)
+    //   4. null — Gemini fallback will describe absence of social data
+ 
+    let resolvedSocialScore = null;
+ 
+    const featSocial = loan.features?.socialScore;
+    const aiSocial   = loan.aiAnalysis?.socialScore;
+ 
+    if (typeof featSocial === "number" && Number.isFinite(featSocial)) {
+      resolvedSocialScore = featSocial;
+      console.log(`[explainability] socialScore from features: ${resolvedSocialScore}`);
+    } else if (typeof aiSocial === "number" && Number.isFinite(aiSocial)) {
+      resolvedSocialScore = aiSocial;
+      console.log(`[explainability] socialScore from aiAnalysis: ${resolvedSocialScore}`);
+    } else if (loan.aiAnalysis?.creditScore != null) {
+      // Legacy proxy: infer rough social contribution from where the credit
+      // score sits vs. a pure-ML baseline.  This is approximate; the badge
+      // in the UI will show "RULE-BASED" for these loans.
+      const cs = Number(loan.aiAnalysis.creditScore);
+      if (Number.isFinite(cs)) {
+        // Map 300–850 → 0–100 as a conservative proxy
+        resolvedSocialScore = Math.round(Math.max(0, Math.min(100, ((cs - 300) / 550) * 100)));
+        console.log(
+          `[explainability] socialScore proxied from creditScore ${cs}: ${resolvedSocialScore}`
+        );
+      }
+    }
+ 
+    if (resolvedSocialScore === null) {
+      console.warn(`[explainability] socialScore unavailable for loan ${loanId} — Gemini will note absence`);
+    }
+    // ── End social score resolution ─────────────────────────────────────────
+ 
     const alternateBlock =
       loan.applicantType === "unbanked"
         ? {
-            referenceId: loan.alternateReferenceId || null,
-            scoringMethod: loan.alternateUnderwriting?.scoringMethod || null,
-            adminAttached: loan.alternateUnderwriting?.adminAttached || null,
-            explanationMetadata:
-              loan.alternateUnderwriting?.explanationMetadata || null,
+            referenceId:         loan.alternateReferenceId || null,
+            scoringMethod:       loan.alternateUnderwriting?.scoringMethod || null,
+            adminAttached:       loan.alternateUnderwriting?.adminAttached || null,
+            explanationMetadata: loan.alternateUnderwriting?.explanationMetadata || null,
             mlShap:
-              // Prefer the live re-run; fall back to any shap stored in the
-              // alternate underwriting block (for previously-scored unbanked loans).
               mlShap ||
               loan.alternateUnderwriting?.explanationMetadata?.shap ||
               null,
           }
-        : {
-            // For banked loans we still expose mlShap so the admin panel can
-            // render the SHAP bar chart without any frontend changes.
-            mlShap: mlShap || null,
-          };
-
+        : { mlShap: mlShap || null };
+ 
+    // ── Gemini explanation ──────────────────────────────────────────────────
+    let geminiExplanation = null;
+    try {
+      // Monthly income: try modelFeatures.monthlyIncome, then annualIncomeEstimate/12
+      const mf = storedFeatures || {};
+      const monthlyIncome =
+        mf.monthlyIncome         ||
+        mf.monthlySalaryNet       ||
+        (mf.annualIncomeEstimate ? mf.annualIncomeEstimate / 12 : null) ||
+        null;
+ 
+      geminiExplanation = await generateLoanExplanation({
+        probability:   typeof explainPd === "number" ? 1 - explainPd : 0.5,
+        socialScore:   resolvedSocialScore,   // correctly resolved — not hardcoded 0
+        monthlyIncome,
+        loanAmount:    loan.requestedAmount ?? null,
+        riskLevel:     explainRisk           ?? "medium",
+        loanType:      loan.loanType         ?? null,
+      });
+ 
+      console.log(
+        `[explainability] Gemini explanation generated for loan ${loanId}:`,
+        geminiExplanation?.length,
+        "bullets | socialScore used:",
+        resolvedSocialScore
+      );
+    } catch (geminiErr) {
+      console.warn(
+        `[explainability] Gemini call failed for loan ${loanId} (non-fatal): ${geminiErr.message}`
+      );
+    }
+    // ── End Gemini block ────────────────────────────────────────────────────
+ 
     return res.status(200).json({
-      loanId: loan._id,
+      loanId:   loan._id,
       loanType: loan.loanType,
-      status: loan.status,
+      status:   loan.status,
       explainability: {
-        modelVersion: loan.aiAnalysis?.modelVersion || null,
+        modelVersion:       loan.aiAnalysis?.modelVersion || null,
         probabilityOfDefault: explainPd,
-        riskLevel: explainRisk,
-        creditScore: loan.aiAnalysis?.creditScore || null,
-        explanationSummary:
-          loan.aiAnalysis?.shapFactors?.explanationSummary || [],
-        flags: loan.aiAnalysis?.amlFlags || [],
+        riskLevel:          explainRisk,
+        creditScore:        loan.aiAnalysis?.creditScore || null,
+        socialScore:        resolvedSocialScore,          // expose for frontend
+        explanationSummary: loan.aiAnalysis?.shapFactors?.explanationSummary || [],
+        flags:              loan.aiAnalysis?.amlFlags || [],
         decisionSummary,
-        alternate: alternateBlock,
+        alternate:          alternateBlock,
+        geminiExplanation,                                // string[] | null
       },
       applicant: {
-        id: loan.userId?._id || null,
+        id:       loan.userId?._id    || null,
         fullName: loan.userId?.fullName || null,
-        email: loan.userId?.email || null,
-        phone: loan.userId?.phone || null,
+        email:    loan.userId?.email  || null,
+        phone:    loan.userId?.phone  || null,
       },
     });
   } catch (error) {
     return res.status(500).json({
       message: "Error fetching explainability",
-      error: error.message,
+      error:   error.message,
     });
   }
 };

@@ -1,7 +1,7 @@
 import User from "../models/User.js";
 import { predictCreditScoreWithModel } from "../services/mlService.js";
-// ADD ↓
 import { getSocialFeatures, computeSocialScore, getSocialInsights } from "../services/socialDataService.js";
+import { generateLoanExplanation } from "../services/geminiService.js"; // ← NEW
 
 function legacyScore(income, requestedAmount) {
   let creditScore;
@@ -108,7 +108,6 @@ export const predictCredit = async (req, res) => {
       scoring = legacyScore(income, requestedAmount);
       scoringSource = "legacy_fallback";
       scoring.mlError = mlError.message;
-      // Assign a fallback probability so social blending still works
       scoring.probability =
         scoring.riskLevel === "low" ? 0.82
         : scoring.riskLevel === "medium" ? 0.65
@@ -126,8 +125,15 @@ export const predictCredit = async (req, res) => {
     const rawSocialScore  = computeSocialScore(socialFeatures);   // 0–100
     const socialScoreNorm = rawSocialScore / 100;                 // 0–1
 
-    // base probability is repayment probability (higher = better creditworthy)
-    const blendedProbability = 0.8 * (scoring.probability ?? 0.5) + 0.2 * socialScoreNorm;
+    // Capture base ML probability BEFORE blending
+    const baseProbability = scoring.probability ?? 0.5;
+
+    // Blend: 70% ML signal, 30% social signal
+    const blendedProbability = 0.7 * baseProbability + 0.3 * socialScoreNorm;
+
+    console.log("[creditController] base_probability    :", baseProbability.toFixed(4));
+    console.log("[creditController] social_score        :", rawSocialScore);
+    console.log("[creditController] blended_probability :", blendedProbability.toFixed(4));
 
     const blendedCreditScore = Math.round(300 + blendedProbability * 550);
     const blendedRiskLevel =
@@ -135,30 +141,58 @@ export const predictCredit = async (req, res) => {
       : blendedCreditScore >= 590 ? "medium"
       : "high";
 
-    scoring.creditScore    = blendedCreditScore;
-    scoring.riskLevel      = blendedRiskLevel;
-    scoring.probability    = blendedProbability;
-    scoring.socialScore    = rawSocialScore;
-    scoring.socialFeatures = socialFeatures;
-    scoring.socialInsights = getSocialInsights(socialFeatures, rawSocialScore);
+    scoring.creditScore     = blendedCreditScore;
+    scoring.riskLevel       = blendedRiskLevel;
+    scoring.probability     = blendedProbability;   // admin reads this field
+    scoring.baseProbability = baseProbability;       // original ML value preserved
+    scoring.socialScore     = rawSocialScore;
+    scoring.socialFeatures  = socialFeatures;
+    scoring.socialInsights  = getSocialInsights(socialFeatures, rawSocialScore);
     // ── End social blending ──────────────────────────────────────────────────
 
     user.creditScore = scoring.creditScore;
     await user.save();
 
+    // ── Gemini explainability (non-blocking — runs after save) ───────────────
+    let geminiExplanation = null;
+    try {
+      // Derive monthly income from the payload (income_monthly feature or incomTotal/12)
+      const monthlyIncome =
+        req.body.income_monthly ||
+        (income > 0 ? income / 12 : null);
+
+      geminiExplanation = await generateLoanExplanation({
+        probability:   blendedProbability,
+        socialScore:   rawSocialScore,
+        monthlyIncome,
+        loanAmount:    requestedAmount,
+        riskLevel:     blendedRiskLevel,
+        loanType:      req.body.loanType || null,
+      });
+
+      console.log("[creditController] Gemini explanation generated:", geminiExplanation.length, "bullets");
+    } catch (geminiErr) {
+      // Non-fatal — explanation is a UX enhancement, not a hard requirement
+      console.warn("[creditController] Gemini explanation failed (non-fatal):", geminiErr.message);
+    }
+    // ── End Gemini block ─────────────────────────────────────────────────────
+
     return res.status(200).json({
-      creditScore:       scoring.creditScore,
-      riskLevel:         scoring.riskLevel,
-      eligibleAmount:    scoring.eligibleAmount,
+      creditScore:           scoring.creditScore,
+      riskLevel:             scoring.riskLevel,
+      eligibleAmount:        scoring.eligibleAmount,
       suggestedInterestRate: scoring.suggestedInterestRate,
-      probability:       scoring.probability,
-      modelInfo:         scoring.modelInfo,
+      probability:           scoring.probability,        // blended — admin uses this
+      modelInfo:             scoring.modelInfo,
       scoringSource,
-      // ── New social fields (additive — existing consumers ignore unknown keys)
-      social_score:      scoring.socialScore    ?? null,
-      social_features:   scoring.socialFeatures ?? null,
-      social_insights:   scoring.socialInsights ?? null,
-      // ────────────────────────────────────────────────────────────────────────
+      // ── Social fields ──────────────────────────────────────────────────────
+      base_probability:  scoring.baseProbability ?? null,
+      social_score:      scoring.socialScore     ?? null,
+      social_features:   scoring.socialFeatures  ?? null,
+      social_insights:   scoring.socialInsights  ?? null,
+      // ── Gemini explainability ───────────────────────────────────────────────
+      gemini_explanation: geminiExplanation,             // string[] | null
+      // ──────────────────────────────────────────────────────────────────────
       ...(scoring.mlError ? { mlError: scoring.mlError } : {}),
       message:
         scoringSource === "ml_model"

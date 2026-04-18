@@ -5,6 +5,7 @@ import { sendLoanSubmittedEmail } from "../services/emailService.js";
 import { predictCreditScoreWithModel } from "../services/mlService.js";
 import { validateAlternateDataPayload } from "../services/alternateUnderwritingEngine.js";
 import { runUnbankedScoringPipeline } from "../services/alternateScoringPipeline.js";
+ import { getSocialFeatures, computeSocialScore } from "../services/socialDataService.js";
 
 const DEFAULT_EDUCATION = "Secondary / secondary special";
 
@@ -894,60 +895,73 @@ export const applyForLoan = async (req, res) => {
       };
     }
 
-    // Layered AI + policy decision (non-breaking keys preserved for frontend).
-    loanData.aiAnalysis = {
-      creditScore: decision.creditScore,
-      riskLevel: decision.riskLevel,
-      eligibleAmount: decision.eligibleAmount,
-      suggestedInterestRate: decision.suggestedInterestRate,
-      suggestedTenure: decision.suggestedTenure,
-      amlFlags: preScreen.flags,
-      shapFactors: {
-        explanationSummary: (() => {
-          const base = [
-            decision.decisionReason,
-            `scoringSource=${scoringSource}`,
-            `borrowerType=${borrowerProfile?.borrowerType || modelFeatures?.userCategory || "unknown"}`,
-          ];
-          if (
-            applicantType === "unbanked" &&
-            alternateUnderwriting?.explanationMetadata?.shap?.topFeatures?.length
-          ) {
-            base.push("alternate_model_shap_top:");
-            alternateUnderwriting.explanationMetadata.shap.topFeatures
-              .slice(0, 8)
-              .forEach((t) => {
-                base.push(`  ${t.name} (shap=${t.shapValue})`);
-              });
-          }
-          return base;
-        })(),
-      },
-      modelVersion: "winner_upgrade_v5",
-    };
 
-    loanData.features = {
-      modelFeatures,
-      applicantProfile: normalizedApplicantProfile,
-      educationDetails: normalizedEducationDetails,
-      scoringSource,
-      probabilityOfDefault: decision.probabilityOfDefault,
-      preScreenStatus: preScreen.preScreenStatus,
-      manualReviewRequired: preScreen.manualReviewRequired,
-      decision: decision.decision,
-      decisionReason: decision.decisionReason,
-      borrowerType: borrowerProfile?.borrowerType || null,
-      underwritingPath: applicantType,
-      alternateWarnings: alternateUnderwriting?.warnings || [],
-      alternateConfidence: alternateUnderwriting?.confidenceLevel || null,
-      alternateReliabilityFlag: alternateUnderwriting?.reliabilityFlag || null,
-      userDecisionExplanation: buildUserDecisionExplanation({
-        decision,
-        applicantType,
-        preScreen,
-        alternateUnderwriting,
-      }),
-    };
+    const _socialHintsForLoan = {
+  isActive: req.body.socialData?.isActive ?? false,
+  accountAge:       req.body.socialData?.accountAge       ?? null,
+  postingFrequency: req.body.socialData?.postingFrequency ?? null,
+  seed: String(userId),
+};
+const _socialFeaturesForLoan = getSocialFeatures(_socialHintsForLoan);
+const _socialScoreForLoan    = computeSocialScore(_socialFeaturesForLoan); // 0-100
+ 
+loanData.features = {
+  modelFeatures,
+  applicantProfile: normalizedApplicantProfile,
+  educationDetails: normalizedEducationDetails,
+  scoringSource,
+  probabilityOfDefault: decision.probabilityOfDefault,
+  preScreenStatus:      preScreen.preScreenStatus,
+  manualReviewRequired: preScreen.manualReviewRequired,
+  decision:             decision.decision,
+  decisionReason:       decision.decisionReason,
+  borrowerType:         borrowerProfile?.borrowerType || null,
+  underwritingPath:     applicantType,
+  alternateWarnings:    alternateUnderwriting?.warnings || [],
+  alternateConfidence:  alternateUnderwriting?.confidenceLevel || null,
+  alternateReliabilityFlag: alternateUnderwriting?.reliabilityFlag || null,
+  userDecisionExplanation: buildUserDecisionExplanation({
+    decision,
+    applicantType,
+    preScreen,
+    alternateUnderwriting,
+  }),
+  // ── Social score persisted so explainability endpoint can read it ─────
+  socialScore: _socialScoreForLoan,  // 0-100; null-safe reads: loan.features.socialScore
+};
+ 
+// Also mirror into aiAnalysis so older code paths that read aiAnalysis still work
+loanData.aiAnalysis = {
+  creditScore:          decision.creditScore,
+  riskLevel:            decision.riskLevel,
+  eligibleAmount:       decision.eligibleAmount,
+  suggestedInterestRate: decision.suggestedInterestRate,
+  suggestedTenure:      decision.suggestedTenure,
+  amlFlags:             preScreen.flags,
+  socialScore:          _socialScoreForLoan, // mirror here too
+  shapFactors: {
+    explanationSummary: (() => {
+      const base = [
+        decision.decisionReason,
+        `scoringSource=${scoringSource}`,
+        `borrowerType=${borrowerProfile?.borrowerType || modelFeatures?.userCategory || "unknown"}`,
+      ];
+      if (
+        applicantType === "unbanked" &&
+        alternateUnderwriting?.explanationMetadata?.shap?.topFeatures?.length
+      ) {
+        base.push("alternate_model_shap_top:");
+        alternateUnderwriting.explanationMetadata.shap.topFeatures
+          .slice(0, 8)
+          .forEach((t) => {
+            base.push(`  ${t.name} (shap=${t.shapValue})`);
+          });
+      }
+      return base;
+    })(),
+  },
+  modelVersion: "winner_upgrade_v5",
+};
 
     if (alternateUnderwriting) {
       loanData.alternateUnderwriting = {
