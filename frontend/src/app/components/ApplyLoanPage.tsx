@@ -52,6 +52,142 @@ export function ApplyLoanPage() {
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [age, setAge] = useState("");
 
+  const SocialPresenceSection = () => (
+  <div className="pt-6 border-t border-slate-200 space-y-4">
+    <div>
+      <h3 className="text-sm font-black text-black uppercase tracking-[0.15em] flex items-center gap-2">
+        Social Presence
+        <span className="text-[10px] font-bold text-slate-400 normal-case tracking-normal border border-slate-300 px-2 py-0.5">
+          Optional
+        </span>
+      </h3>
+      <p className="text-xs text-slate-500 mt-1 font-medium">
+        Providing social signals may improve your trust score by up to 20 points.
+      </p>
+    </div>
+
+    <div className="flex items-center justify-between bg-slate-50 border border-slate-200 px-4 py-3">
+      <span className="text-xs font-black uppercase tracking-widest text-black">
+        Active on social media?
+      </span>
+      <div className="flex gap-2">
+        {(["Yes", "No"] as const).map((opt) => {
+          const active = opt === "Yes";
+          const selected = socialData.isActive === active;
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => setSocialData((prev) => ({ ...prev, isActive: active }))}
+              className={`px-4 py-1.5 text-xs font-black uppercase tracking-widest border-[1.5px] transition-all ${
+                selected
+                  ? "bg-blue-600 border-blue-600 text-white"
+                  : "bg-white border-black text-black hover:border-blue-600"
+              }`}
+            >
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+
+    {socialData.isActive && (
+      <div className="grid sm:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="space-y-1.5">
+          <label className="text-xs font-black uppercase tracking-widest text-slate-600 block">
+            Account Age (years)
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={25}
+            placeholder="e.g. 5"
+            value={socialData.accountAge}
+            onChange={(e) => setSocialData((prev) => ({ ...prev, accountAge: e.target.value }))}
+            className="w-full px-3 py-2.5 border-[1.5px] border-slate-300 bg-white text-slate-900 text-sm font-bold focus:border-blue-600 focus:outline-none transition-colors"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-black uppercase tracking-widest text-slate-600 block">
+            Posting Frequency
+          </label>
+          <div className="flex gap-2">
+            {(["Low", "Medium", "High"] as const).map((freq) => {
+              const val = freq.toLowerCase() as "low" | "medium" | "high";
+              const selected = socialData.postingFrequency === val;
+              return (
+                <button
+                  key={freq}
+                  type="button"
+                  onClick={() => setSocialData((prev) => ({ ...prev, postingFrequency: val }))}
+                  className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider border-[1.5px] transition-all ${
+                    selected
+                      ? "bg-black border-black text-white"
+                      : "bg-white border-slate-300 text-black hover:border-black"
+                  }`}
+                >
+                  {freq}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+);
+const SocialTrustScoreDisplay = () => {
+  if (!socialTrustScore) return null;
+
+  const score = socialTrustScore.score;
+  const grade =
+    score >= 70
+      ? { label: "STRONG",     color: "text-green-700",  bg: "bg-green-50",  bar: "bg-green-500",  border: "border-green-300"  }
+      : score >= 45
+      ? { label: "MODERATE",   color: "text-yellow-700", bg: "bg-yellow-50", bar: "bg-yellow-400", border: "border-yellow-300" }
+      : { label: "DEVELOPING", color: "text-slate-600",  bg: "bg-slate-50",  bar: "bg-slate-400",  border: "border-slate-300"  };
+
+  return (
+    <div className={`border-[1.5px] ${grade.border} ${grade.bg} p-5 shadow-[4px_4px_0_0_rgba(0,0,0,1)] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.25em] text-black/50">
+            Social Trust Score
+          </p>
+          <p className={`text-3xl font-black tracking-tighter ${grade.color}`}>
+            {score}
+            <span className="text-base font-bold text-black/30 ml-1">/100</span>
+          </p>
+        </div>
+        <span className={`text-[10px] font-black uppercase tracking-[0.15em] px-3 py-1.5 border-[1.5px] border-black ${grade.color}`}>
+          {grade.label}
+        </span>
+      </div>
+
+      <div className="w-full h-2 bg-black/10">
+        <div
+          className={`h-full ${grade.bar} transition-all duration-700`}
+          style={{ width: `${score}%` }}
+        />
+      </div>
+
+      <div className="space-y-2 pt-1">
+        {(socialTrustScore.insights ?? []).map((insight, idx) => (
+          <div key={idx} className="flex items-start gap-2.5">
+            <div className="w-1.5 h-1.5 bg-blue-600 mt-1.5 flex-shrink-0" />
+            <p className="text-xs font-bold text-slate-700 leading-relaxed">{insight}</p>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest border-t border-black/10 pt-3">
+        Social trust contributes 20% to your final credit score.
+      </p>
+    </div>
+  );
+};
   // Helper function to calculate age from date of birth
   const calculateAge = (dob: string) => {
     if (!dob) {
@@ -151,6 +287,15 @@ export function ApplyLoanPage() {
     risk_level?: string;
     data?: { probability?: number; risk_level?: string };
   } | null>(null);
+  const [socialData, setSocialData] = useState({
+  isActive: true,
+  accountAge: "",
+  postingFrequency: "medium" as "low" | "medium" | "high",
+});
+const [socialTrustScore, setSocialTrustScore] = useState<{
+  score: number;
+  insights: string[];
+} | null>(null);
   const [predictionLoading, setPredictionLoading] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
   const [assetsConfirmed, setAssetsConfirmed] = useState(false);
@@ -900,8 +1045,14 @@ export function ApplyLoanPage() {
       );
       if (predRes.ok) {
         const predData = await predRes.json();
-        // Backend may return { probability, riskLevel } or { data: { probability, risk_level } }
         setPrediction(predData);
+        // Capture social trust score if backend returned it
+        if (predData.social_score != null) {
+          setSocialTrustScore({
+            score:    predData.social_score,
+            insights: predData.social_insights ?? [],
+          });
+        }
       }
     } catch (e) {
       console.warn("Prediction call failed (non-blocking):", e);
@@ -958,6 +1109,13 @@ export function ApplyLoanPage() {
           type: getCollateralType(),
           estimatedValue: collateralEstimatedValue || loanAmount[0],
         },
+        ...(socialData.isActive !== undefined && {
+      socialData: {
+        isActive:         socialData.isActive,
+        accountAge:       socialData.accountAge ? Number(socialData.accountAge) : null,
+        postingFrequency: socialData.postingFrequency,
+      },
+    }),
         applicantProfile: {
           occupation: resolvedOccupation || null,
           incomeAnnual: resolvedIncomeAnnual,
@@ -2561,6 +2719,7 @@ export function ApplyLoanPage() {
                             {ocrResult && !ocrResult.identityVerified && !ocrError && <p className="text-xs text-amber-600 mt-0.5">⚠ Could not verify — check image clarity</p>}
                             {ocrError && <p className="text-xs text-amber-600 mt-0.5">⚠ {ocrError}</p>}
                           </div>
+                          
                         </CardContent>
                       </Card>
                     </label>
@@ -2708,7 +2867,7 @@ export function ApplyLoanPage() {
                       </label>
                     )}
                   </div>
-
+                    <SocialPresenceSection />
                   {occupation === 'Gig Worker' && (
                     <div className="flex items-start gap-3 mt-4">
                       <input type="checkbox" id="gig-confirm" className="mt-0.5 w-4 h-4 cursor-pointer flex-shrink-0" />
@@ -2733,7 +2892,7 @@ export function ApplyLoanPage() {
                     </div>
                   </div>
                 </div>
-
+                
               </CardContent>
             </Card>
 
@@ -2809,7 +2968,7 @@ export function ApplyLoanPage() {
                 </div>
               </div>
             </div>
-
+           <SocialTrustScoreDisplay />
             <Card className="bg-green-50 border-green-300">
               <CardContent className="p-4 flex items-center gap-4">
                 <CheckCircle2 className="w-6 h-6 text-green-600 flex-shrink-0" />
@@ -2898,6 +3057,9 @@ export function ApplyLoanPage() {
                 )}
               </div>
             )}
+
+            {/* Existing: green snapshot card */}
+            <Card className="bg-green-50 border-green-300"></Card>
 
             <div className="flex justify-between items-center pt-8 border-t-[1.5px] border-black">
               <Button variant="ghost" onClick={prevStep} className="border-[1.5px] border-black text-black hover:bg-gray-100 rounded-none font-black text-xs uppercase tracking-[0.15em] px-6 py-3" disabled={isSubmitting}>EDIT DETAILS</Button>
@@ -3196,7 +3358,7 @@ export function ApplyLoanPage() {
                         </label>
                       </div>
                     </div>
-
+                    <SocialPresenceSection />
                   </CardContent>
                 </Card>
 

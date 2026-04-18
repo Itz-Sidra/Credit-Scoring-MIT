@@ -1,5 +1,7 @@
 import User from "../models/User.js";
 import { predictCreditScoreWithModel } from "../services/mlService.js";
+// ADD ↓
+import { getSocialFeatures, computeSocialScore, getSocialInsights } from "../services/socialDataService.js";
 
 function legacyScore(income, requestedAmount) {
   let creditScore;
@@ -106,19 +108,57 @@ export const predictCredit = async (req, res) => {
       scoring = legacyScore(income, requestedAmount);
       scoringSource = "legacy_fallback";
       scoring.mlError = mlError.message;
+      // Assign a fallback probability so social blending still works
+      scoring.probability =
+        scoring.riskLevel === "low" ? 0.82
+        : scoring.riskLevel === "medium" ? 0.65
+        : 0.35;
     }
+
+    // ── Social score blending (additive layer — ML model unchanged) ──────────
+    const socialHints = {
+      isActive:         req.body.socialData?.isActive         ?? true,
+      accountAge:       req.body.socialData?.accountAge       ?? null,
+      postingFrequency: req.body.socialData?.postingFrequency ?? null,
+      seed: String(userId),
+    };
+    const socialFeatures = getSocialFeatures(socialHints);
+    const rawSocialScore  = computeSocialScore(socialFeatures);   // 0–100
+    const socialScoreNorm = rawSocialScore / 100;                 // 0–1
+
+    // base probability is repayment probability (higher = better creditworthy)
+    const blendedProbability = 0.8 * (scoring.probability ?? 0.5) + 0.2 * socialScoreNorm;
+
+    const blendedCreditScore = Math.round(300 + blendedProbability * 550);
+    const blendedRiskLevel =
+      blendedCreditScore >= 700 ? "low"
+      : blendedCreditScore >= 590 ? "medium"
+      : "high";
+
+    scoring.creditScore    = blendedCreditScore;
+    scoring.riskLevel      = blendedRiskLevel;
+    scoring.probability    = blendedProbability;
+    scoring.socialScore    = rawSocialScore;
+    scoring.socialFeatures = socialFeatures;
+    scoring.socialInsights = getSocialInsights(socialFeatures, rawSocialScore);
+    // ── End social blending ──────────────────────────────────────────────────
 
     user.creditScore = scoring.creditScore;
     await user.save();
 
     return res.status(200).json({
-      creditScore: scoring.creditScore,
-      riskLevel: scoring.riskLevel,
-      eligibleAmount: scoring.eligibleAmount,
+      creditScore:       scoring.creditScore,
+      riskLevel:         scoring.riskLevel,
+      eligibleAmount:    scoring.eligibleAmount,
       suggestedInterestRate: scoring.suggestedInterestRate,
-      probability: scoring.probability,
-      modelInfo: scoring.modelInfo,
+      probability:       scoring.probability,
+      modelInfo:         scoring.modelInfo,
       scoringSource,
+      // ── New social fields (additive — existing consumers ignore unknown keys)
+      social_score:      scoring.socialScore    ?? null,
+      social_features:   scoring.socialFeatures ?? null,
+      social_insights:   scoring.socialInsights ?? null,
+      // ────────────────────────────────────────────────────────────────────────
       ...(scoring.mlError ? { mlError: scoring.mlError } : {}),
       message:
         scoringSource === "ml_model"
