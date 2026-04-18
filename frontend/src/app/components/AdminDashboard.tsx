@@ -126,7 +126,6 @@ export function AdminDashboard() {
         <div className="w-full px-6 sm:px-8 md:px-10 lg:px-12">
           <div className="flex justify-between items-center h-20">
             <div className="flex items-center gap-3">
-              <img src="/images/download.png" alt="Barclays Logo" className="w-8 h-8 object-contain" />
               <span className="font-black text-xl sm:text-2xl text-black uppercase tracking-tight">CREDIT <span className="text-black/30"></span></span>
             </div>
             <nav className="hidden md:flex items-center gap-8 mt-1">

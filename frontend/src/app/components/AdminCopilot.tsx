@@ -186,7 +186,6 @@ export function AdminCopilot() {
         <div className="w-full px-6 sm:px-8 md:px-10 lg:px-12">
           <div className="flex justify-between items-center h-20">
             <div className="flex items-center gap-3">
-              <img src="/images/download.png" alt="Barclays Logo" className="w-8 h-8 object-contain" />
               <span className="font-black text-xl sm:text-2xl text-black uppercase tracking-tight">
                 CREDIT 
               </span>
@@ -261,7 +260,7 @@ export function AdminCopilot() {
             </div>
             {/* <div className="inline-flex items-center gap-2 border-[1.5px] border-black bg-black text-white px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em]">
               <BrainCircuit className="w-4 h-4" />
-              <span>Barclays Analyst Copilot</span>
+              <span>AI Analyst Copilot</span>
             </div> */}
           </div>
 

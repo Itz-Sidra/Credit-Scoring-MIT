@@ -2728,7 +2728,7 @@ export function ApplyLoanPage() {
                     <div className="flex items-start gap-4">
                       <input type="checkbox" id="final-confirm" checked={finalConfirmed} onChange={(e) => setFinalConfirmed(e.target.checked)} className="mt-0.5 w-5 h-5 cursor-pointer flex-shrink-0" />
                       <Label htmlFor="final-confirm" className="text-sm text-slate-900 font-medium cursor-pointer leading-tight">
-                        I confirm that the information provided is true to the best of my knowledge and I authorize Barclays to verify these details.
+                        I confirm that the information provided is true to the best of my knowledge and I authorize the institution to verify these details.
                       </Label>
                     </div>
                   </div>
